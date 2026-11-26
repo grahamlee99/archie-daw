@@ -23,8 +23,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   // the front page and licence of the source repository sit at its top
   fs.copyFileSync(path.join(root, "desktop-host", "REPO_README.md"), path.join(stage, "README.md")); fs.copyFileSync(path.join(root, "desktop-host", "LICENSE"), path.join(stage, "LICENSE"));
   const zip = path.join(out, name + ".zip"); fs.rmSync(zip, { force: true });
-  const z = spawnSync("tar", ["-a", "-c", "-f", name + ".zip", name], { cwd: out, encoding: "utf8" });
+  // Windows ships a tar that writes real zip files; the one that comes with Git does not (it would write a tar file called .zip)
+  const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
+  const z = spawnSync(tar, ["-a", "-c", "-f", name + ".zip", name], { cwd: out, encoding: "utf8" });
   if (z.status !== 0) throw new Error("could not make the zip: " + (z.stderr || z.error));
   const buf = fs.readFileSync(zip);
+  if (buf.subarray(0, 2).toString() !== "PK") throw new Error("the file made is not a real zip");
   console.log("Built " + path.relative(root, zip) + " (" + (buf.length / 1048576).toFixed(2) + " MB)\nSHA-256 " + crypto.createHash("sha256").update(buf).digest("hex") + "\nNothing was uploaded or published.");
 }

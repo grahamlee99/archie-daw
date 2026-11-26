@@ -2,6 +2,17 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.154",
+      "date": "2026-11-26",
+      "title": "Archies Alien Delay 0.2.0: presets, ramp, sample and hold, and a visualiser",
+      "notes": [
+        "New in Archies Alien Delay: presets for playing single hits, with short, longer and even longer repeats, a feedback ramp and a sample and hold.",
+        "New controls: Feedback Ramp climbs over a quarter of a bar to eight bars, and Sample and Hold jumps the filter, or the delay time, in step with the song.",
+        "New: a neon green visualiser that flashes to the beat and sends out a ring for every echo.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.153",
       "date": "2026-11-26",
       "title": "Archies Alien Delay comes with the program",
