@@ -3008,6 +3008,88 @@ int main()
         HostEngine g; g.loadAudioOptions(); CHECK (g.renderWithCardBuffer.load(), "and the choice is remembered"); e.audioOptionsFile().deleteFile();
     }
 
+    // MIDI CONTROLLER LANES: pitch bend, mod wheel, sustain and expression in note clips
+    {
+        struct CtlProbe : public juce::AudioProcessor
+        {
+            CtlProbe() : juce::AudioProcessor (BusesProperties().withOutput ("out", juce::AudioChannelSet::stereo(), true)) {}
+            const juce::String getName() const override { return "CtlProbe"; }
+            void prepareToPlay (double, int) override {}
+            void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer& m) override
+            {
+                b.clear(); double ppq = 0.0; if (auto* ph = getPlayHead()) if (auto pos = ph->getPosition()) if (auto q = pos->getPpqPosition()) ppq = *q;
+                for (const auto meta : m) { CtlEv e; if (ctlOfMidi (meta.getMessage(), e)) { e.beat = ppq + (double) meta.samplePosition / 48000.0 * 2.0; got.push_back (e); } }
+            }
+            double getTailLengthSeconds() const override { return 0; }
+            bool acceptsMidi() const override { return true; }
+            bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+            bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; }
+            int getCurrentProgram() override { return 0; }
+            void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; }
+            void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {}
+            void setStateInformation (const void*, int) override {}
+            std::vector<CtlEv> got;
+            std::vector<CtlEv> of (int type) const { std::vector<CtlEv> v; for (const auto& e : got) if (e.type == type) v.push_back (e); return v; }
+        };
+        auto ctl = [] (std::initializer_list<std::array<double, 3>> list) { juce::Array<juce::var> a; for (auto& x : list) { juce::Array<juce::var> e; e.add (x[0]); e.add ((int) x[1]); e.add ((int) x[2]); e.add (1); a.add (juce::var (e)); } return juce::var (a); };
+        auto clipOf = [&] (juce::var ctls) { auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", 4.0); c->setProperty ("notes", juce::var (juce::Array<juce::var>())); if (! ctls.isVoid()) c->setProperty ("ctls", ctls); return juce::var (c); };
+        const double beatsPerBlock = bs / 48000.0 * 2.0;
+        auto playTo = [&] (HostEngine& e, double beat) { for (int i = 0; i < 20000 && e.transport.posBeats.load() < beat; ++i) run (e, 1, bs); };
+        auto nearBeat = [&] (double a, double b) { return std::abs (a - b) <= beatsPerBlock + 0.01; };
+        {
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.transport.setBpm (120.0);
+            auto pr = std::make_unique<CtlProbe>(); auto* p = pr.get(); p->setPlayHead (e.hostPlayHead()); e.addProcessor (0, std::move (pr), "ctl probe");
+            const int id = e.editAddInstance (0, 0.0, 8.0, 0.0, clipOf (ctl ({ { 1.0, 128, 12000 }, { 2.0, 128, 8192 }, { 0.0, 1, 40 }, { 3.0, 64, 127 }, { 0.5, 11, 90 }, { 1.0, 7, 5 } })), 0);
+            CHECK (id != 0 && e.trackAt (0)->arrSnap.load()->insts[0].content->ctls.size() == 5, "a clip keeps pitch bend, mod wheel, sustain and expression, and nothing else");
+            e.transport.play(); playTo (e, 3.5);
+            const auto bend = p->of (128);
+            CHECK (bend.size() == 2 && bend[0].value == 12000 && nearBeat (bend[0].beat, 1.0) && bend[1].value == 8192 && nearBeat (bend[1].beat, 2.0), "pitch bend plays at its places");
+            CHECK (p->of (1).size() == 1 && p->of (1)[0].value == 40 && p->of (11).size() == 1 && p->of (64).size() == 1 && p->of (64)[0].value == 127, "mod wheel, expression and sustain play too");
+            playTo (e, 4.4);
+            { const auto s = p->of (64), x = p->of (11); CHECK (s.size() == 2 && s[1].value == 0 && nearBeat (s[1].beat, 4.0), "each time round the clip starts from rest, so a pedal held to its end is let go"); CHECK (x.size() >= 2 && x[1].value == 127 && nearBeat (x[1].beat, 4.0), "expression goes back to full"); }
+            playTo (e, 7.5); CHECK (p->of (64).size() == 3 && p->of (64).back().value == 127, "and the second time round plays them again");
+            playTo (e, 8.4); CHECK (p->of (64).back().value == 0 && p->of (1).back().value == 0, "where the clip ends everything it moved is back at rest");
+        }
+        {
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.transport.setBpm (120.0);
+            auto pr = std::make_unique<CtlProbe>(); auto* p = pr.get(); p->setPlayHead (e.hostPlayHead()); e.addProcessor (0, std::move (pr), "ctl probe");
+            e.editAddInstance (0, 0.0, 16.0, 0.0, clipOf (ctl ({ { 0.25, 128, 3000 }, { 0.5, 64, 127 } })), 0);
+            e.transport.locate (2.0); e.transport.play(); run (e, 4, bs);
+            CHECK (p->of (128).size() == 1 && p->of (128)[0].value == 3000 && p->of (64).size() == 1, "starting part-way through brings the instrument to the clip's values");
+            e.transport.stop(); run (e, 4, bs);
+            CHECK (p->of (128).back().value == 8192 && p->of (64).back().value == 0, "stopping lets the pedal go and centres the bend");
+            const size_t n = p->got.size(); run (e, 20, bs); CHECK (p->got.size() == n, "and while stopped the clips send nothing, so the player's own wheels are not overridden");
+        }
+        {   // saving, editing the notes, splitting, joining and MIDI files
+            HostEngine e; e.prepareOffline (sr, bs, 0);
+            const int id = e.editAddInstance (0, 0.0, 4.0, 0.0, clipOf (ctl ({ { 1.0, 1, 64 }, { 3.0, 128, 100 } })), 0);
+            const int cid = e.trackAt (0)->arrSnap.load()->insts[0].content->id;
+            { auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", 4.0); juce::Array<juce::var> ns; auto* n = new juce::DynamicObject(); n->setProperty ("beat", 0.0); n->setProperty ("len", 1.0); n->setProperty ("note", 60); ns.add (juce::var (n)); c->setProperty ("notes", ns); e.editContent (cid, juce::var (c)); }
+            CHECK (e.trackAt (0)->arrSnap.load()->insts[0].content->ctls.size() == 2 && e.trackAt (0)->arrSnap.load()->insts[0].content->notes.size() == 1, "editing the notes keeps the controller data");
+            auto song = e.saveProject(); HostEngine g; g.prepareOffline (sr, bs, 0); g.loadProject (song, [] (juce::String) {});
+            CHECK (g.trackAt (0)->arrSnap.load()->insts[0].content->ctls.size() == 2 && g.trackAt (0)->arrSnap.load()->insts[0].content->ctls[1].value == 100, "it is saved with the song");
+            const int second = e.editSplitInstance (id, 2.0); juce::String err; const int joined = e.editJoinInstance (id, err);
+            CHECK (second != 0 && joined != 0 && e.trackAt (0)->arrSnap.load()->insts[0].content->ctls.size() >= 2, "split and join keep it");
+            auto mid = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("archie-ctl.mid"); CHECK (e.exportMidiFile (mid, err) == 1, "it goes into a MIDI file");
+            HostEngine m; m.prepareOffline (sr, bs, 0); m.importMidiFile (mid, err);
+            bool mod = false, bd = false; if (m.trackCount.load() > 0) for (const auto& c : m.trackAt (m.trackCount.load() - 1)->arrSnap.load()->insts[0].content->ctls) { mod = mod || (c.type == 1 && c.value == 64); bd = bd || (c.type == 128 && c.value == 100); }
+            CHECK (mod && bd, "and comes back from one"); mid.deleteFile();
+        }
+        {   // overdub: a new movement replaces the old one over the stretch it was played
+            Clip c; c.lengthBeats = 8.0; c.ctls = { { 0.5, 1, 10, 1 }, { 2.0, 1, 20, 1 }, { 3.0, 1, 30, 1 }, { 6.0, 1, 60, 1 }, { 2.5, 11, 50, 1 } };
+            HostEngine::mergeCtls (c, { { 1.5, 1, 100, 1 }, { 3.5, 1, 110, 1 } });
+            std::vector<int> mods; for (const auto& e : c.ctls) if (e.type == 1) mods.push_back (e.value);
+            CHECK ((mods == std::vector<int> { 10, 100, 110, 60 }) && c.ctls.size() == 5, "old values inside the stretch are replaced; the rest, and other controllers, stay");
+            HostEngine::mergeCtls (c, { { 7.0, 1, 1, 1 }, { 1.0, 1, 2, 1 } }); mods.clear(); for (const auto& e : c.ctls) if (e.type == 1) mods.push_back (e.value);
+            CHECK ((mods == std::vector<int> { 2, 100, 110, 60, 1 }), "also when the playing went round the end of the clip");
+        }
+    }
+
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -484,12 +484,13 @@ public:
             auto& t = *tracks[(size_t) ti]; juce::MidiMessageSequence seq; int notes = 0;
             for (const auto& in : t.arrSnap.load()->insts)
             {
-                if (! in.content || in.content->audio || in.content->lengthBeats <= 0.0 || in.content->notes.empty()) continue;
+                if (! in.content || in.content->audio || in.content->lengthBeats <= 0.0 || (in.content->notes.empty() && in.content->ctls.empty())) continue;
                 const double L = in.content->lengthBeats, end = in.length > 0.0 ? in.start + in.length : in.start + L;
                 walkInstance (in, in.start, end, false,
                     [&] (const NoteEv& nt, double tb) { seq.addEvent (juce::MidiMessage::noteOn (nt.ch, nt.note, (juce::uint8) nt.vel), tb * 480.0); ++notes; },
                     [&] (const NoteEv& nt, double tb) { seq.addEvent (juce::MidiMessage::noteOff (nt.ch, nt.note), tb * 480.0); },
                     [&] (const NoteEv&) {});
+                walkCtls (in, in.start, end, [&] (const CtlEv& e, double tb) { seq.addEvent (ctlMidi (e.ch, e.type, e.value), tb * 480.0); ++notes; });
             }
             if (notes == 0) continue;
             seq.addEvent (juce::MidiMessage::textMetaEvent (3, t.name), 0.0); seq.sort(); seq.updateMatchedPairs(); mf.addTrack (seq); ++written;
@@ -505,7 +506,7 @@ public:
         juce::MidiFile mf; { auto in = file.createInputStream(); if (in == nullptr || ! mf.readFrom (*in)) { err = file.getFileName() + " is not a MIDI file"; return 0; } }
         const int tf = mf.getTimeFormat(); if (tf <= 0) { err = "this MIDI file counts time in frames (SMPTE), which is not supported"; return 0; }
         const double ppq = (double) tf;
-        struct Imported { juce::String name; std::vector<NoteEv> notes; double end = 0.0; };
+        struct Imported { juce::String name; std::vector<NoteEv> notes; double end = 0.0; std::vector<CtlEv> ctls; };
         std::vector<Imported> found; std::vector<TempoEntry> tempo; tempo.push_back (TempoEntry {});
         bool gotTempo = false;
         for (int ti = 0; ti < mf.getNumTracks(); ++ti)
@@ -518,6 +519,7 @@ public:
                 else if (m.isTimeSignatureMetaEvent()) { int n = 4, d = 4; m.getTimeSignatureInfo (n, d); if (beat <= 1.0e-9) { tempo[0].tsNum = n; tempo[0].tsDen = d; } else { TempoEntry e2 = tempo.back(); e2.beat = beat; e2.tsNum = n; e2.tsDen = d; tempo.push_back (e2); } }
                 else if (m.isTrackNameEvent()) im.name = m.getTextFromTextMetaEvent();
                 else if (m.isNoteOn()) open[m.getNoteNumber() + m.getChannel() * 128] = { beat, m.getVelocity() };
+                else if (m.isController() || m.isPitchWheel()) { CtlEv k; if (ctlOfMidi (m, k)) { k.beat = juce::jmax (0.0, beat); im.ctls.push_back (k); } }
                 else if (m.isNoteOff() || (m.isNoteOn() && false))
                 {
                     auto it = open.find (m.getNoteNumber() + m.getChannel() * 128);
@@ -540,7 +542,7 @@ public:
         {
             if (! addTrack()) break; const int idx = trackCount.load() - 1; ++made;
             auto& t = *tracks[(size_t) idx]; if (im.name.isNotEmpty()) t.name = im.name.substring (0, 40);
-            auto c = std::make_shared<Clip>(); c->id = nextContentId.fetch_add (1); c->lengthBeats = juce::jmax (bar, std::ceil (im.end / bar) * bar); c->notes = im.notes;
+            auto c = std::make_shared<Clip>(); c->id = nextContentId.fetch_add (1); c->lengthBeats = juce::jmax (bar, std::ceil (im.end / bar) * bar); c->notes = im.notes; for (const auto& k : im.ctls) if (k.beat < c->lengthBeats) c->ctls.push_back (k); sortCtls (*c);
             ClipInst in; in.id = nextInstanceId.fetch_add (1); in.start = 0.0; in.length = c->lengthBeats; in.content = c;
             auto ins = std::make_shared<Insts>(); ins->push_back (in); putArr (idx, ins);
         }
@@ -1155,6 +1157,25 @@ public:
     using Insts = std::vector<ClipInst>;
     std::atomic<int> nextContentId { 1 }, nextInstanceId { 1 };
 
+    static void sortCtls (Clip& c) { std::stable_sort (c.ctls.begin(), c.ctls.end(), [] (const CtlEv& a, const CtlEv& b) { return a.beat < b.beat; }); }
+    // OVERDUB: newly played controller values replace what the clip held over the same stretch (for that controller and channel), so an old and a new movement never fight. `added` is in the order it was played.
+    static void mergeCtls (Clip& c, const std::vector<CtlEv>& added)
+    {
+        std::map<int, double> last;
+        for (const auto& n : added)
+        {
+            const int key = n.type * 32 + n.ch; const auto it = last.find (key); const double a = it == last.end() ? n.beat : it->second, b = n.beat; const bool first = it == last.end();
+            c.ctls.erase (std::remove_if (c.ctls.begin(), c.ctls.end(), [&] (const CtlEv& o)
+            {
+                if (o.type != n.type || o.ch != n.ch) return false;
+                if (std::abs (o.beat - b) < 1.0e-6) return true;
+                if (first) return false;
+                return a <= b ? (o.beat > a + 1.0e-6 && o.beat < b) : (o.beat > a + 1.0e-6 || o.beat < b);      // (the second: the clip came round to its start)
+            }), c.ctls.end());
+            last[key] = b;
+        }
+        c.ctls.insert (c.ctls.end(), added.begin(), added.end()); sortCtls (c);
+    }
     std::shared_ptr<Clip> contentFromVar (const juce::var& v)
     {
         auto c = std::make_shared<Clip>();
@@ -1168,6 +1189,15 @@ public:
                 e.note = juce::jlimit (0, 127, (int) n.getProperty ("note", 60)); e.vel = juce::jlimit (1, 127, (int) n.getProperty ("vel", 100)); e.ch = juce::jlimit (1, 16, (int) n.getProperty ("ch", 1));
                 if (e.beat >= 0 && e.beat < c->lengthBeats) c->notes.push_back (e);
             }
+        if (auto* arr = v.getProperty ("ctls", {}).getArray())      // [beat, type, value, channel]
+            for (const auto& n : *arr)
+            {
+                auto* a = n.getArray(); if (a == nullptr || a->size() < 3 || c->ctls.size() >= 20000) continue;
+                CtlEv e; e.beat = (double) (*a)[0]; e.type = (int) (*a)[1]; if (ctlSlot (e.type) < 0) continue;
+                e.value = juce::jlimit (0, ctlMax (e.type), (int) (*a)[2]); e.ch = a->size() > 3 ? juce::jlimit (1, 16, (int) (*a)[3]) : 1;
+                if (e.beat >= 0 && e.beat < c->lengthBeats) c->ctls.push_back (e);
+            }
+        sortCtls (*c);
         return c;
     }
     std::shared_ptr<Insts> instsOf (TrackState& t) { return std::make_shared<Insts> (t.arrSnap.load()->insts); }
@@ -1197,6 +1227,7 @@ public:
         if (c.audio) { o->setProperty ("audio", true); o->setProperty ("path", c.audio->path); o->setProperty ("name", c.audio->name); o->setProperty ("durationSec", c.audio->durationSec()); o->setProperty ("rate", c.audio->rate); }
         for (const auto& n : c.notes) { auto* e = new juce::DynamicObject(); e->setProperty ("beat", n.beat); e->setProperty ("len", n.len); e->setProperty ("note", n.note); e->setProperty ("vel", n.vel); e->setProperty ("ch", n.ch); notes.add (juce::var (e)); }
         o->setProperty ("notes", notes);
+        if (! c.ctls.empty()) { juce::Array<juce::var> cs; for (const auto& e : c.ctls) { juce::Array<juce::var> a; a.add (e.beat); a.add (e.type); a.add (e.value); a.add (e.ch); cs.add (juce::var (a)); } o->setProperty ("ctls", cs); }
         return juce::var (o);
     }
     juce::var clipToVar (const TrackState& t) const { return clipVar (t.primaryClip()); }       // the first instance's content: "the pattern" of the single-pattern pages
@@ -1504,10 +1535,15 @@ public:
             t.pending.assign (ev.begin() + (long) split, ev.end()); ev.resize (split);
         }
         std::map<int, std::pair<double, int>> open;
-        std::vector<NoteEv> got; double maxBeat = 0.0;
+        std::vector<NoteEv> got; std::vector<CtlEv> gotC; double maxBeat = 0.0;
         for (const auto& e : ev)
         {
             const int status = e.b[0] & 0xF0, ch = (e.b[0] & 0x0F) + 1, note = e.b[1];
+            if (status == 0xB0 || status == 0xE0)      // a wheel or pedal
+            {
+                CtlEv k; if (ctlOfMidi (juce::MidiMessage (e.b[0], e.b[1], e.b[2]), k)) { k.beat = e.beat; gotC.push_back (k); }
+                continue;
+            }
             const bool on = status == 0x90 && e.b[2] > 0;
             if (on) open[note + ch * 128] = { e.beat, e.b[2] };
             else if (auto it = open.find (note + ch * 128); it != open.end())
@@ -1517,11 +1553,11 @@ public:
             }
         }
         for (auto& kv : open) { NoteEv n; n.beat = kv.second.first; n.len = loopTake ? juce::jmax (0.05, loopE - n.beat) : 0.25; n.note = kv.first % 128; n.vel = kv.second.second; n.ch = kv.first / 128; got.push_back (n); maxBeat = juce::jmax (maxBeat, n.beat + n.len); }
-        if (got.empty()) return;
+        if (got.empty() && gotC.empty()) return;
         auto before = instsOf (t);
         auto ins = std::make_shared<Insts> (*before);
         const double bar = (double) transport.tsNum.load();
-        double firstBeat = got[0].beat; for (const auto& n : got) firstBeat = juce::jmin (firstBeat, n.beat);
+        double firstBeat = got.empty() ? gotC[0].beat : got[0].beat; for (const auto& n : got) firstBeat = juce::jmin (firstBeat, n.beat); for (const auto& k : gotC) firstBeat = juce::jmin (firstBeat, k.beat);
         // recording goes into the clip instance that is playing where the first note was played (every instance of that content changes with it); otherwise a new clip is made
         int hit = -1;
         for (int i = 0; i < (int) ins->size(); ++i) { const auto& in = (*ins)[(size_t) i]; if (in.content && in.content->lengthBeats > 0.0 && firstBeat >= in.start && (in.length <= 0.0 || firstBeat < in.start + in.length)) { hit = i; break; } }
@@ -1530,22 +1566,26 @@ public:
             const ClipInst in = (*ins)[(size_t) hit];
             auto c = std::make_shared<Clip> (*in.content);
             for (auto n : got) { n.beat = std::fmod (juce::jmax (0.0, n.beat - in.start + in.offset), c->lengthBeats); c->notes.push_back (n); }
+            { std::vector<CtlEv> add; for (auto k : gotC) { k.beat = std::fmod (juce::jmax (0.0, k.beat - in.start + in.offset), c->lengthBeats); add.push_back (k); } mergeCtls (*c, add); }
             for (auto& x : *ins) if (x.content == in.content) x.content = c;
         }
         else
         {
+            if (got.empty()) return;      // wheels or pedals alone, with no clip under them, do not make a clip
             auto c = std::make_shared<Clip>(); c->id = nextContentId.fetch_add (1);
             ClipInst in; in.id = nextInstanceId.fetch_add (1);
             if (ins->empty() && ! loopTake)
             {
                 c->lengthBeats = juce::jmax (bar, std::ceil (maxBeat / bar) * bar);                        // the first take: one pattern that loops
                 for (auto n : got) { n.beat = std::fmod (n.beat, c->lengthBeats); c->notes.push_back (n); }
+                { std::vector<CtlEv> add; for (auto k : gotC) { k.beat = std::fmod (juce::jmax (0.0, k.beat), c->lengthBeats); add.push_back (k); } mergeCtls (*c, add); }
             }
             else
             {
                 in.start = std::floor ((loopTake ? loopS : firstBeat) / bar) * bar;                      // a later take elsewhere on the timeline (or a loop take: the clip covers the loop): its own clip, played once
                 c->lengthBeats = juce::jmax (bar, std::ceil (((loopTake ? loopE : maxBeat) - in.start) / bar) * bar); in.length = c->lengthBeats;
                 for (auto n : got) { n.beat -= in.start; c->notes.push_back (n); }
+                { std::vector<CtlEv> add; for (auto k : gotC) { k.beat -= in.start; if (k.beat >= 0.0 && k.beat < c->lengthBeats) add.push_back (k); } mergeCtls (*c, add); }
             }
             in.content = c; ins->push_back (in);
         }
@@ -2157,6 +2197,7 @@ public:
                     walkInstance (piece, piece.start, piece.start + piece.length, false,
                         [&] (const NoteEv& nt, double tb) { NoteEv n = nt; n.beat = tb - a.start; (void) off; const double endB = juce::jmin (c->lengthBeats, n.beat + n.len); n.len = juce::jmax (0.01, endB - n.beat); if (n.beat < c->lengthBeats) c->notes.push_back (n); },
                         [&] (const NoteEv&, double) {}, [&] (const NoteEv&) {});
+                    walkCtls (piece, piece.start, piece.start + piece.length, [&] (const CtlEv& e, double tb) { CtlEv k = e; k.beat = tb - a.start; if (k.beat >= 0.0 && k.beat < c->lengthBeats) c->ctls.push_back (k); });
                 }
                 r.content = c; r.offset = 0.0; r.length = c->lengthBeats;
             }
@@ -2226,7 +2267,7 @@ public:
     }
 
     // replace the notes of a clip's CONTENT: every instance of it, on any track, changes together
-    bool editContent (int contentId, const juce::var& clip) { auto old = findContent (contentId); if (old == nullptr || old->audio) return false; auto nc = contentFromVar (clip); nc->id = contentId; return replaceContent (old, nc, "Edit notes"); }
+    bool editContent (int contentId, const juce::var& clip) { auto old = findContent (contentId); if (old == nullptr || old->audio) return false; auto nc = contentFromVar (clip); nc->id = contentId; if (! clip.hasProperty ("ctls")) { for (const auto& e : old->ctls) if (e.beat < nc->lengthBeats) nc->ctls.push_back (e); } return replaceContent (old, nc, "Edit notes"); }
     // Change a note clip's notes with a function (quantise, transpose...). `label` names the undo step; the same kind of edit within 700 ms (a drag, a held key) is ONE step.
     bool editNotes (int contentId, const std::string& label, const std::function<bool (Clip&)>& change)
     {

@@ -29,6 +29,26 @@ constexpr int kSends = 8, kReturns = 8;     // each track has kSends sends; each
 constexpr int kReturnBase = 100, kMasterChain = 200;   // plug-in chains are addressed by number: 0.. a track, 100.. an FX return, 200 the master inserts
 
 struct NoteEv { double beat = 0, len = 0.25; int note = 60, vel = 100, ch = 1; };
+// CONTROLLER DATA of a note clip: what the wheels and pedals did. type 128 = pitch bend (value 0 to 16383, 8192 = centre); otherwise the MIDI controller number (value 0 to 127). Only the four the lanes show are
+// kept: pitch bend, mod wheel (1), sustain pedal (64) and expression (11). A value holds until the next one, to the end of that pass of the clip; where a clip says nothing, the controller is at rest (centre, 0, up, full).
+struct CtlEv { double beat = 0; int type = 1, value = 0, ch = 1; };
+constexpr int kPitchBend = 128, kCtlSlots = 4;
+inline int ctlSlot (int type) { return type == kPitchBend ? 0 : type == 1 ? 1 : type == 64 ? 2 : type == 11 ? 3 : -1; }
+inline int ctlType (int slot) { return slot == 0 ? kPitchBend : slot == 1 ? 1 : slot == 2 ? 64 : 11; }
+inline int ctlRest (int type) { return type == kPitchBend ? 8192 : type == 11 ? 127 : 0; }
+inline int ctlMax (int type) { return type == kPitchBend ? 16383 : 127; }
+inline bool ctlOfMidi (const juce::MidiMessage& m, CtlEv& out)
+{
+    if (m.isPitchWheel()) { out.type = kPitchBend; out.value = m.getPitchWheelValue(); }
+    else if (m.isController() && ctlSlot (m.getControllerNumber()) >= 0) { out.type = m.getControllerNumber(); out.value = m.getControllerValue(); }
+    else return false;
+    out.ch = m.getChannel(); return true;
+}
+inline juce::MidiMessage ctlMidi (int ch, int type, int value)
+{
+    const int c = juce::jlimit (1, 16, ch), v = juce::jlimit (0, ctlMax (type), value);
+    return type == kPitchBend ? juce::MidiMessage::pitchWheel (c, v) : juce::MidiMessage::controllerEvent (c, type, v);
+}
 // The sound of an audio clip: read once from a file, kept at the file's own sample rate, and never changed afterwards (the audio thread reads it without waiting).
 struct AudioData
 {
@@ -42,7 +62,7 @@ struct AudioData
 };
 // A clip's content is notes (MIDI) or sound (audio). An audio clip has no notes and lengthBeats 0; its length is the sound's own length in seconds.
 // patternBank >= 0 makes the clip a PATTERN BLOCK: it has no notes, it says which pattern a self-sequencing plug-in (Archie Drums) plays for as long as the block lasts (the DAW sets the plug-in's own pattern control at the block edges).
-struct Clip   { double lengthBeats = 4.0; std::vector<NoteEv> notes; int id = 0; std::shared_ptr<const AudioData> audio; int patternBank = -1; };
+struct Clip   { double lengthBeats = 4.0; std::vector<NoteEv> notes; int id = 0; std::shared_ptr<const AudioData> audio; int patternBank = -1; std::vector<CtlEv> ctls; /* sorted by beat */ };
 
 // A clip INSTANCE: a place on the timeline that shows some shared CONTENT (the notes). Several instances can point at the same content, and editing the content changes all of them.
 // start/length are in beats on the song timeline (length 0 = it goes on looping for ever, which is what the single pattern of the first versions was); offset is how far into the content
@@ -209,6 +229,32 @@ inline void walkInstance (const ClipInst& in, double b0, double b1, bool chase, 
             else if (chase && tOff > b0 + 1.0e-9) chaseOn (nt);
             if (tOff >= b0 - 1.0e-9 && tOff < b1 - 1.0e-12 && tOff > tOn) off (nt, tOff);
         }
+    }
+}
+// Every controller value of one instance that falls in the beat range [b0, b1), in time order: fn(event, tBeat). The content repeats inside the instance, as the notes do.
+template <typename Fn>
+inline void walkCtls (const ClipInst& in, double b0, double b1, Fn&& fn, bool oneShot = false)
+{
+    const Clip* c = in.content.get(); if (c == nullptr || c->lengthBeats <= 0.0 || c->ctls.empty() || in.muted) return;
+    const double ws = in.start, we = in.length > 0.0 ? in.start + in.length : kForever, L = c->lengthBeats, base = ws - in.offset, from = juce::jmax (b0, ws), to = juce::jmin (b1, we);
+    if (to <= from) return;
+    for (int k = juce::jmax (0, (int) std::floor ((from - base) / L)); base + (double) k * L < to; ++k)
+    {
+        if (oneShot && k > 0) break;
+        for (const auto& e : c->ctls) { const double t = base + e.beat + (double) k * L; if (t >= from - 1.0e-9 && t < to - 1.0e-12) fn (e, t); }
+    }
+}
+// What every controller should be at beat `beat` according to the clips playing there: want[channel][slot], -1 where no clip has said anything yet.
+inline void ctlStateAt (const Arrangement& arr, double beat, int (&want)[16][kCtlSlots])
+{
+    for (auto& c : want) for (int& v : c) v = -1;
+    for (const auto& in : arr.insts)
+    {
+        const Clip* c = in.content.get(); if (c == nullptr || c->lengthBeats <= 0.0 || c->ctls.empty() || in.muted) continue;
+        const double we = in.length > 0.0 ? in.start + in.length : kForever; if (beat < in.start - 1.0e-9 || beat >= we - 1.0e-9) continue;
+        const double L = c->lengthBeats, run = beat - in.start + in.offset; double p = std::fmod (run, L); if (L - p < 1.0e-7) p = 0.0;      // each time round, the clip starts again from rest
+        for (const auto& e : c->ctls) if (e.beat <= p + 1.0e-9)      // (values before the point where a split piece begins still hold)
+ want[(e.ch - 1) & 15][juce::jmax (0, ctlSlot (e.type))] = e.value;
     }
 }
 struct FileAudio { juce::AudioBuffer<float> buf; bool valid = false; };
@@ -807,13 +853,23 @@ class TrackSourceProcessor : public SimpleProc<>
 public:
     TrackSourceProcessor (TrackState& t, const BlockInfo& b) : SimpleProc<> (stereoInOut()), ts (t), blk (b) {}
     // every note the CLIP has started and not yet ended, so Stop (or a jump, or a replaced pattern) can end each one with a real note-off: many plug-ins ignore the all-notes-off controller
-    bool clipHeld[16][128] {}; signed char heldShift[16][128] {}; const Arrangement* lastArr = nullptr; int lastPlay = 1;      // (heldShift: how far each held note was moved up or down when it started, so its note-off finds it again even if the transpose moves meanwhile)
+    // controllers: what the clips last told the instrument (-1 = nothing: at rest as far as the clips are concerned)
+    int ctlSent[16][kCtlSlots]; bool ctlFresh = true; double ctlEnd = -1.0e30;
+    void ctlSend (juce::MidiBuffer& midi, int ch, int slot, int value, int pos) { if (ctlSent[ch][slot] == value) return; midi.addEvent (ctlMidi (ch + 1, ctlType (slot), value), pos); ctlSent[ch][slot] = value; }
+    void ctlFollow (juce::MidiBuffer& midi, const int (&want)[16][kCtlSlots], int pos)      // make the instrument match the clips: their value, or rest where they had moved something and now say nothing
+    {
+        for (int ch = 0; ch < 16; ++ch) for (int s = 0; s < kCtlSlots; ++s)
+            if (want[ch][s] >= 0) ctlSend (midi, ch, s, want[ch][s], pos);
+            else if (ctlSent[ch][s] >= 0) { ctlSend (midi, ch, s, ctlRest (ctlType (s)), pos); ctlSent[ch][s] = -1; }
+    }
+    void ctlRelease (juce::MidiBuffer& midi) { int none[16][kCtlSlots]; for (auto& c : none) for (int& v : c) v = -1; ctlFollow (midi, none, 0); }
+    bool clipHeld[16][128] {}; signed char heldShift[16][128] {}; const Arrangement* lastArr = nullptr; const Arrangement* lastCtlArr = nullptr; int lastPlay = 1;      // (heldShift: how far each held note was moved up or down when it started, so its note-off finds it again even if the transpose moves meanwhile)
     const juce::String getName() const override { return "Track source"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isBusesLayoutSupported (const BusesLayout& l) const override
     { return l.getMainInputChannelSet() == juce::AudioChannelSet::stereo() && l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo(); }
-    void prepareToPlay (double sr, int) override { rate = sr; phase = 0; sweepT = 0; impulseCount = 0; }
+    void prepareToPlay (double sr, int) override { rate = sr; phase = 0; sweepT = 0; impulseCount = 0; for (auto& c : ctlSent) for (int& v : c) v = -1; ctlFresh = true; }
 
     void processBlock (juce::AudioBuffer<float>& buf, juce::MidiBuffer& midi) override
     {
@@ -829,7 +885,8 @@ public:
             const int pos = lm.timeMs >= blk.blockStartMs ? juce::jlimit (0, n - 1, (int) ((lm.timeMs - blk.blockStartMs) * 0.001 * blk.sr)) : 0;
             const juce::MidiMessage m (lm.b, (int) lm.size);
             midi.addEvent (m, pos);
-            if (blk.recording && blk.playing && ts.recTarget.load() && (m.isNoteOn() || m.isNoteOff()))
+            CtlEv liveCtl;
+            if (blk.recording && blk.playing && ts.recTarget.load() && (m.isNoteOn() || m.isNoteOff() || ctlOfMidi (m, liveCtl)))
             {
                 double beat = blk.segs[0].startBeat;
                 for (int s = 0; s < blk.numSegs; ++s) if (pos >= blk.segs[s].startSample) beat = blk.segs[s].beatOfSample (pos);
@@ -859,6 +916,9 @@ public:
             lastArr = arr;
         }
 
+        // ---- MIDI: the clips' controllers ----
+        if (blk.panic || ! blk.playing || play == 0) { ctlRelease (midi); ctlFresh = true; }
+        if (arr != lastCtlArr) { ctlFresh = true; lastCtlArr = arr; }
         // ---- MIDI: the clip instances ----
         lastPlay = play;
         if (blk.playing && play != 0)
@@ -868,6 +928,19 @@ public:
                 if (sg.cut) for (int ch = 0; ch < 16; ++ch) for (int nt = 0; nt < 128; ++nt) if (clipHeld[ch][nt]) { midi.addEvent (juce::MidiMessage::noteOff (ch + 1, juce::jlimit (0, 127, nt + (int) heldShift[ch][nt])), sg.startSample); clipHeld[ch][nt] = false; }      // a hot cue jump: end the notes from before it
                 const double b0 = sg.startBeat, b1 = sg.endBeat;
                 auto at = [&] (double t) { return sg.startSample + juce::jlimit (0, sg.numSamples - 1, (int) std::lround (sg.sampleOfBeat (t) - (double) sg.startSample)); };
+                {   // CONTROLLERS first, so a pedal or bend is in place before the notes of the same moment. After a start, jump, loop wrap or edit the instrument is brought to the clips' values; a clip's end returns to rest.
+                    int want[16][kCtlSlots];
+                    if (ctlFresh || sg.cut || std::abs (b0 - ctlEnd) > 1.0e-6) { ctlStateAt (*arr, b0, want); ctlFollow (midi, want, sg.startSample); ctlFresh = false; }
+                    for (const auto& in : arr->insts) if (in.content != nullptr && ! in.content->ctls.empty() && in.content->lengthBeats > 0.0)
+                    {   // where this clip ends, or comes round to its start again, inside this piece of the song
+                        const double L = in.content->lengthBeats, base = in.start - in.offset, we = in.length > 0.0 ? in.start + in.length : kForever;
+                        const double turn = base + std::ceil ((b0 - 1.0e-9 - base) / L) * L;
+                        if (turn > in.start + 1.0e-9 && turn < we && turn < b1 - 1.0e-12) { ctlStateAt (*arr, turn, want); ctlFollow (midi, want, at (turn)); }
+                        if (we > b0 - 1.0e-9 && we < b1 - 1.0e-12) { ctlStateAt (*arr, we, want); ctlFollow (midi, want, at (we)); }
+                    }
+                    for (const auto& in : arr->insts) walkCtls (in, b0, b1, [&] (const CtlEv& e, double t) { ctlSend (midi, (e.ch - 1) & 15, juce::jmax (0, ctlSlot (e.type)), e.value, at (t)); }, play == 2);
+                    ctlEnd = b1;
+                }
                 for (const auto& in : arr->insts)
                 {
                     GrooveEval ge; const GrooveEval* gp = nullptr;

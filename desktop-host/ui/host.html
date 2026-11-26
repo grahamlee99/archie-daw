@@ -762,7 +762,7 @@
       <div class="ki-h">View mode</div>
       <div class="ki-row"><select id="kView"><option value="key" selected>Key Edit</option><option value="multi" disabled>Multi Lane Edit (not built)</option></select></div>
       <div class="ki-h">Controller</div>
-      <div class="ki-row"><select id="kCtl"><option value="vel" selected>Velocity</option><option disabled>Pitch bend (not built)</option><option disabled>Mod wheel (not built)</option><option disabled>Sustain (not built)</option><option disabled>Expression (not built)</option></select></div>
+      <div class="ki-row"><select id="kCtl" title="What the lane under the notes shows. Drag in it to draw a controller; right-drag to rub values out."><option value="vel" selected>Velocity</option><option value="128">Pitch bend</option><option value="1">Mod wheel</option><option value="64">Sustain pedal</option><option value="11">Expression</option></select></div>
     </div>
     <div id="keyMain">
       <div class="row" style="margin-bottom:6px;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2276,6 +2276,7 @@
     if ((content ? content.id : 0) !== R.cid) R.center = true;            // a different clip: show its notes (centred) the next time the roll is drawn on screen
     R.inst = inst; R.cid = content ? content.id : 0; R.len = content ? content.lengthBeats : 4;
     R.notes = content ? content.notes.map(function (n) { return { beat: n.beat, len: n.len, note: n.note, vel: n.vel, ch: n.ch || 1 }; }) : [];
+    R.ctls = content && content.ctls ? content.ctls.map(function (c) { return { beat: c[0], type: c[1], value: c[2], ch: c[3] || 1 }; }) : [];
     $("rollInfo").textContent = content ? "\u2014 " + R.notes.length + " note" + (R.notes.length === 1 ? "" : "s") + ", " + R.len + " beats" + (inst && inst.length > R.len ? ", repeating" : "") : "\u2014 select a note clip (or double-click a lane to make one)";
     rollDraw();
   }
@@ -2321,7 +2322,8 @@
     if (R.inst && S.tr) {                                                                               // where the song is, inside this clip
       var cb = (S.tr.beats || 0) - R.inst.start; if (cb >= 0 && (R.inst.length <= 0 || cb < R.inst.length)) { var pos = (cb + (R.inst.offset || 0)) % R.len; g.strokeStyle = bad; g.lineWidth = 2; g.beginPath(); g.moveTo(R.kb + pos * R.zoom, 0); g.lineTo(R.kb + pos * R.zoom, H); g.stroke(); g.lineWidth = 1; }
     }
-    // velocity lane
+    // the lane under the notes: velocity, or one controller
+    if (ctlLane() !== null) { ctlDraw(ink, acc); return; }
     var vc = $("rollVel"), v = vc.getContext("2d"); v.clearRect(0, 0, vc.width, vc.height);
     v.fillStyle = "rgba(0,0,0,0.2)"; v.fillRect(R.kb, 0, vc.width - R.kb, R.velH); v.fillStyle = ink; v.font = "9px sans-serif"; v.fillText("velocity", 4, 12);
     R.notes.forEach(function (n, i) { var h = Math.round((n.vel / 127) * (R.velH - 6)), x = R.kb + n.beat * R.zoom; v.globalAlpha = R.sel[i] ? 1 : 0.7; v.fillStyle = R.sel[i] ? ink : acc; v.fillRect(x, R.velH - h - 2, 5, h); v.globalAlpha = 1; });
@@ -2339,7 +2341,7 @@
   function audition(nn) { if (nn < 0 || nn > 127) return; host("noteOn", { track: S.sel, note: nn, vel: 100 }); setTimeout(function () { host("noteOff", { track: S.sel, note: nn }); }, 200); }
   function rollCommit(label) {
     if (!R.cid) return;
-    var clip = { lengthBeats: R.len, notes: R.notes.map(function (n) { return { beat: n.beat, len: n.len, note: n.note, vel: n.vel, ch: n.ch }; }) };
+    var clip = { lengthBeats: R.len, notes: R.notes.map(function (n) { return { beat: n.beat, len: n.len, note: n.note, vel: n.vel, ch: n.ch }; }), ctls: (R.ctls || []).map(function (c) { return [c.beat, c.type, c.value, c.ch]; }) };
     host("editContent", { contentId: R.cid, clip: clip }).then(function (r) { if (r && !r.ok) log(r.error, true); loadArr(); });
   }
   function rollDownGrid(e) {
@@ -2370,8 +2372,56 @@
     }
     rollDraw();
   }
+  // ---- CONTROLLER LANES: pitch bend, mod wheel, sustain pedal, expression. A value holds until the next one. Drawing changes only the stretch you drag over: after it, the controller goes back to what it was. ----
+  var CTL = { 128: { name: "pitch bend", max: 16383, rest: 8192 }, 1: { name: "mod wheel", max: 127, rest: 0 }, 64: { name: "sustain pedal", max: 127, rest: 0 }, 11: { name: "expression", max: 127, rest: 127 } };
+  function ctlLane() { var s = $("kCtl"), v = s ? s.value : "vel"; return CTL[v] ? +v : null; }
+  function ctlValueAt(list, type, beat) { var v = CTL[type].rest; for (var i = 0; i < list.length; i++) if (list[i].type === type && list[i].beat <= beat + 1e-9) v = list[i].value; return v; }
+  function ctlY(type, value) { return R.velH - 2 - (value / CTL[type].max) * (R.velH - 6); }
+  function ctlFromY(type, y) {
+    var c = CTL[type], v = Math.max(0, Math.min(c.max, Math.round((R.velH - 2 - y) / (R.velH - 6) * c.max)));
+    if (type === 128 && Math.abs(y - ctlY(type, 8192)) <= 3) v = 8192;      // the centre is easy to hit
+    return v;
+  }
+  // the list with [from, to) drawn: values every `step` beats from fn(beat), and the old value again at the end. value null = rubbed out (back to what held before the stretch)
+  function ctlPaint(list, type, from, to, step, fn, len) {
+    var after = ctlValueAt(list, type, to), out = list.filter(function (c) { return c.type !== type || c.beat < from - 1e-9 || c.beat >= to - 1e-9; });
+    var hasEnd = out.some(function (c) { return c.type === type && Math.abs(c.beat - to) < 1e-6; });
+    if (fn) for (var b = from; b < to - 1e-9; b += step) out.push({ beat: b, type: type, value: fn(b), ch: 1 });
+    if (!hasEnd && to < len - 1e-9) out.push({ beat: to, type: type, value: after, ch: 1 });
+    out.sort(function (a, b) { return a.beat - b.beat; });
+    var last = {}, kept = [];      // a value that changes nothing is not kept
+    out.forEach(function (c) { var k = c.type + ":" + c.ch, was = last[k] === undefined ? CTL[c.type].rest : last[k]; if (c.value !== was) kept.push(c); last[k] = c.value; });
+    return kept;
+  }
+  function ctlDraw(ink, acc) {
+    var type = ctlLane(), vc = $("rollVel"), v = vc.getContext("2d"); v.clearRect(0, 0, vc.width, vc.height);
+    v.fillStyle = "rgba(0,0,0,0.2)"; v.fillRect(R.kb, 0, vc.width - R.kb, R.velH); v.fillStyle = ink; v.font = "9px sans-serif";
+    CTL[type].name.split(" ").forEach(function (w, i) { v.fillText(w, 4, 12 + i * 10); });
+    var base = ctlY(type, type === 128 ? 8192 : 0), pts = (R.ctls || []).filter(function (c) { return c.type === type; }), marks = [{ beat: 0, value: CTL[type].rest }].concat(pts);
+    v.fillStyle = acc;
+    for (var i = 0; i < marks.length; i++) {
+      var x1 = R.kb + marks[i].beat * R.zoom, x2 = R.kb + (i + 1 < marks.length ? marks[i + 1].beat : R.len) * R.zoom, y = ctlY(type, marks[i].value);
+      if (x2 <= x1) continue; v.globalAlpha = 0.35; v.fillRect(x1, Math.min(y, base), x2 - x1, Math.abs(base - y)); v.globalAlpha = 1; v.fillRect(x1, y - 1, x2 - x1, 2);
+    }
+    if (type === 128) { v.strokeStyle = ink; v.globalAlpha = 0.35; v.beginPath(); v.moveTo(R.kb, base + 0.5); v.lineTo(vc.width, base + 0.5); v.stroke(); v.globalAlpha = 1; }
+  }
+  function ctlDown(e) {
+    var type = ctlLane(), p = rollPt(e, $("rollVel")); if (p.x < R.kb) return; e.preventDefault();
+    R.drag = { mode: "ctl", type: type, erase: e.button === 2 || S.tool === "eraser", x: p.x, y: p.y, moved: false };
+    ctlMove(e);
+  }
+  function ctlMove(e) {
+    var d = R.drag, type = d.type, p = rollPt(e, $("rollVel")), step = type === 64 ? R.snap : Math.min(R.snap, 0.0625);
+    var b0 = Math.max(0, Math.min(d.x, p.x) - R.kb) / R.zoom, b1 = Math.max(0, Math.max(d.x, p.x) - R.kb) / R.zoom;
+    var from = Math.floor(b0 / step + 1e-9) * step, to = Math.min(R.len, (Math.floor(b1 / step + 1e-9) + 1) * step); if (from >= to) return;
+    var vNow = ctlFromY(type, p.y), vWas = ctlFromY(type, d.y), xNow = (p.x - R.kb) / R.zoom, xWas = (d.x - R.kb) / R.zoom;
+    var fn = d.erase ? null : type === 64 ? function () { return 127; } : function (b) { var k = Math.abs(xNow - xWas) < 1e-6 ? 1 : Math.max(0, Math.min(1, (b + step / 2 - xWas) / (xNow - xWas))); return Math.round(vWas + (vNow - vWas) * k); };
+    R.ctls = ctlPaint(R.ctls || [], type, from, to, step, fn, R.len);
+    d.x = type === 64 ? d.x : p.x; d.y = p.y; d.moved = true; rollDraw();
+  }
   function rollDownVel(e) {
-    if (!R.cid) return; var p = rollPt(e, $("rollVel")), best = -1, bd = 1e9;
+    if (!R.cid) return;
+    if (ctlLane() !== null) { ctlDown(e); return; } var p = rollPt(e, $("rollVel")), best = -1, bd = 1e9;
     R.notes.forEach(function (n, i) { var x = R.kb + n.beat * R.zoom, d = Math.abs(p.x - (x + 2)); if (d < bd) { bd = d; best = i; } });
     if (best < 0 || bd > 8) return; e.preventDefault();
     if (!R.sel[best]) { R.sel = {}; R.sel[best] = true; }
@@ -2382,6 +2432,7 @@
   function rollMove(e) {
     var d = R.drag; if (!d) return;
     if (d.mode === "vel") { rollVelMove(e); return; }
+    if (d.mode === "ctl") { ctlMove(e); return; }
     if (d.piano !== undefined) return;
     if (d.mode === "pan") { $("rollWrap").scrollLeft = d.sl - (e.clientX - d.x0); R.top = Math.max(R.rows - 1, Math.min(127, d.top + Math.round((e.clientY - d.y0) / R.rowH))); rollDraw(); return; }
     if (d.mode === "erase") { var pe = rollPt(e, $("roll")), he = noteAt(pe); if (he) { R.notes.splice(he.i, 1); R.sel = {}; d.moved = true; rollDraw(); } return; }
@@ -2401,7 +2452,7 @@
     if (d.piano !== undefined) return;
     if (d.mode === "box") { rollDraw(); return; }
     if (d.mode === "pan") return;
-    if (d.mode === "erase") { if (d.moved) rollCommit(); rollDraw(); return; }
+    if (d.mode === "erase" || d.mode === "ctl") { if (d.moved) rollCommit(); rollDraw(); return; }
     if (d.moved) { if (d.mode === "resize" && d.orig[0]) R.lastLen = R.notes[d.orig[0].i].len; rollCommit(); }
     rollDraw();
   }
@@ -2420,6 +2471,8 @@
   $("roll").addEventListener("mousedown", rollDownGrid);
   $("roll").addEventListener("contextmenu", function (e) { e.preventDefault(); });
   $("rollVel").addEventListener("mousedown", rollDownVel);
+  $("rollVel").addEventListener("contextmenu", function (e) { e.preventDefault(); e.stopPropagation(); });
+  $("kCtl").onchange = function () { this.blur(); rollDraw(); };
   document.addEventListener("mousemove", rollMove);
   document.addEventListener("mouseup", rollUp);
   $("rollWrap").addEventListener("mouseenter", function () { R.hover = true; }); $("rollWrap").addEventListener("mouseleave", function () { R.hover = false; });
@@ -2768,6 +2821,7 @@
   }
   window.addEventListener("contextmenu", function (e) {
     var t = e.target, inField = /INPUT|SELECT|TEXTAREA/.test(t.tagName || ""); if (inField) return;
+    if (t.id === "rollVel") { e.preventDefault(); return; }
     if (Date.now() < (S.noCtxUntil || 0)) { e.preventDefault(); e.stopPropagation(); return; }      // a box-select or a Ctrl + right-drag copy just ended: no menu
     var lr = t.closest && t.closest("#arr .lane.alrow .lname"), mlb = t.closest && t.closest("#arr [data-mlanes]");
     if (lr || mlb) {

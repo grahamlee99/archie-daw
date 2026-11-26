@@ -2,6 +2,18 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.150",
+      "date": "2026-11-26",
+      "title": "MIDI controller lanes",
+      "notes": [
+        "New in the note editor: choose Pitch bend, Mod wheel, Sustain pedal or Expression under Controller. Drag in the lane to draw it, and right-drag to rub values out.",
+        "Drawing changes only the stretch you drag over. Pitch bend snaps to the centre, and the sustain pedal follows your snap setting.",
+        "Recording now keeps what your wheels and pedals did, into the clip you play over. A new movement replaces the old one over the same stretch.",
+        "Each time a clip comes round, and where it ends or you stop, the controllers return to rest, so a pedal or bend never sticks. They are saved with the song and travel in MIDI files.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.149",
       "date": "2026-11-26",
       "title": "Master tune for audio clips",
