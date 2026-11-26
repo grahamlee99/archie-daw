@@ -1969,6 +1969,16 @@ int main()
           CHECK (in.pitched != nullptr && in.pitched->numSamples() == in.content->audio->numSamples() && ! e.warpBusy(), "the render arrives with exactly the source's length");
           auto o = run (e, 400, bs); const double hz = pitchOf (o, 0.5, 1.5); CHECK (hz > 0 && std::abs (1200.0 * std::log2 (hz / 440.0)) < 15.0, "the clip now sounds an octave up (440 Hz from 220)");
           e.editSetInstance (id, props ({ { "transpose", 0.0 } })); e.waitForWarp(); CHECK (e.trackAt (0)->arrSnap.load()->insts[0].pitched == nullptr, "transpose 0 drops the render: the clip plays its source again");
+          {   // MASTER TUNE: audio clips only, measured
+              HostEngine m; m.audioOptionsFile().deleteFile(); m.loadAudioOptions(); m.prepareOffline (sr, bs, 0); m.transport.play(); juce::String er3; const int mi = m.editImportAudio (0, f220, 0.0, er3); m.editSetInstance (mi, props ({ { "length", 8.0 }, { "keepFormant", false } }));
+              CHECK (m.setAudioOptions (props ({ { "masterTuneCents", 100.0 } })), "master tune can be set"); m.waitForWarp(); auto o1 = run (m, 400, bs); const double h1 = pitchOf (o1, 0.5, 1.5);
+              CHECK (h1 > 0 && std::abs (1200.0 * std::log2 (h1 / 233.0819)) < 15.0, "100 cent up: a 220 Hz clip sounds at 233 Hz");
+              CHECK (m.trackAt (0)->arrSnap.load()->insts[0].transpose == 0.0, "the clip's own transpose is untouched");
+              HostEngine h2; h2.loadAudioOptions(); CHECK (h2.masterTuneCents.load() == 100, "and it is remembered");
+              m.setAudioOptions (props ({ { "masterTuneCents", 999.0 } })); CHECK (m.masterTuneCents.load() == 100, "limited to one semitone either way");
+              m.setAudioOptions (props ({ { "masterTuneCents", 0.0 } })); m.waitForWarp(); CHECK (m.trackAt (0)->arrSnap.load()->insts[0].pitched == nullptr, "back at 0 the clip plays its source again");
+              m.audioOptionsFile().deleteFile();
+          }
           { HostEngine z; z.prepareOffline (sr, bs, 0); z.transport.play(); juce::String er2; z.editImportAudio (0, f220, 0.0, er2); HostEngine q; q.prepareOffline (sr, bs, 0); q.transport.play(); const int qi = q.editImportAudio (0, f220, 0.0, er2); q.editSetInstance (qi, props ({ { "transpose", 5.0 } })); q.waitForWarp(); q.editSetInstance (qi, props ({ { "transpose", 0.0 } })); q.waitForWarp();
             auto a = run (z, 100, bs), b = run (q, 100, bs); bool same = a.size() == b.size(); for (size_t i = 0; same && i < a.size(); ++i) if (a[i] != b[i]) same = false; CHECK (same, "a clip never transposed and one set back to 0 play bit for bit the same"); } }
         { HostEngine e; e.prepareOffline (sr, bs, 0); e.transport.play(); juce::String err; e.undo.clock = [] { static double c = 0; c += 5000; return c; }; const int id = e.editImportAudio (0, f220, 0.0, err);
@@ -2975,6 +2985,27 @@ int main()
         e.service(); { HostEngine h; CHECK (h.cuePadText (0) == "Note 36, channel 10" && h.cuePadText (1) == "CC 20, channel 1", "learned pads are remembered on this computer"); }
         e.cueLearn.store (1); e.cueConsume (juce::MidiMessage::noteOn (10, 36, (juce::uint8) 100)); CHECK (e.cuePadText (0).isEmpty() && e.cuePadText (1) == "Note 36, channel 10", "one control serves one cue");
         for (int i = 0; i < archie::Transport::kCues; ++i) e.clearCuePad (i); e.cuePadFile().deleteFile();
+    }
+
+    // PLAY IN BACKGROUND: on by default; off, the card is let go after a second away (never while recording) and taken back on return
+    {
+        using B = HostEngine::Background;
+        CHECK (HostEngine::backgroundAction (true, false, false, false, 60.0) == B::nothing, "left on, the sound card is kept however long another program is in front");
+        CHECK (HostEngine::backgroundAction (false, false, false, false, 0.4) == B::nothing && HostEngine::backgroundAction (false, false, false, false, 1.0) == B::release, "off: let go after a second away, not for a passing pop-up");
+        CHECK (HostEngine::backgroundAction (false, false, false, true, 60.0) == B::nothing, "never while recording");
+        CHECK (HostEngine::backgroundAction (false, false, true, false, 60.0) == B::nothing && HostEngine::backgroundAction (false, true, true, false, 0.0) == B::restore, "it stays let go while away and comes back with the program");
+        CHECK (HostEngine::backgroundAction (true, false, true, false, 60.0) == B::restore, "ticking it again takes the card back");
+        HostEngine e; e.audioOptionsFile().deleteFile(); e.loadAudioOptions(); CHECK (e.playInBackground.load(), "on unless the person unticks it");
+        auto* o = new juce::DynamicObject(); o->setProperty ("playInBackground", false); CHECK (e.setAudioOptions (juce::var (o)) && ! e.playInBackground.load(), "it can be switched off");
+        HostEngine g; g.loadAudioOptions(); CHECK (! g.playInBackground.load(), "and is remembered"); e.audioOptionsFile().deleteFile();
+    }
+
+    // RENDER WITH THE SOUND CARD'S BUFFER: off = pieces of 512; on = the card's own piece size; remembered
+    {
+        HostEngine e; e.audioOptionsFile().deleteFile(); e.loadAudioOptions(); e.prepareOffline (48000.0, 128, 0);
+        CHECK (! e.renderWithCardBuffer.load() && e.renderPieceSize() == 512, "exports use pieces of 512 unless asked otherwise");
+        auto* o = new juce::DynamicObject(); o->setProperty ("renderWithCardBuffer", true); CHECK (e.setAudioOptions (juce::var (o)) && e.renderPieceSize() == 128, "ticked, they use the sound card's buffer size");
+        HostEngine g; g.loadAudioOptions(); CHECK (g.renderWithCardBuffer.load(), "and the choice is remembered"); e.audioOptionsFile().deleteFile();
     }
 
     std::printf("%d checks, %d failed\n", checks, failures);

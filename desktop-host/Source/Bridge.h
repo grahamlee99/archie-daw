@@ -128,6 +128,8 @@ public:
 
     std::function<void (const juce::String&)> onOpenPanel;    // the floating Track Panel window: the page's query string says what it shows
     std::function<void()> onClosePanel;
+    std::function<void (const juce::String&)> onCloseWindow;      // one of the windows of their own, by its key
+    std::function<void()> onQuit;
     std::function<void (int)> onShowTab;   // 0 console, 1 studio
     std::function<void (const juce::String&)> onNavigateStudio;
 
@@ -264,7 +266,7 @@ private:
             if (onOpenPanel) onOpenPanel ("?panel=1&kind=" + kind + "&id=" + juce::String (inum (p, "id", 0)));
             return ok();
         }
-        if (cmd == "audioOption") { if (! engine.setAudioOptions (p)) return fail ("give latencyAdjustMs (milliseconds) or maxThreads (0 to 7, or -1 for automatic)"); return ok(); }
+        if (cmd == "audioOption") { if (! engine.setAudioOptions (p)) return fail ("give latencyAdjustMs (milliseconds), maxThreads (0 to 7, or -1 for automatic), playInBackground or renderWithCardBuffer (true or false), or masterTuneCents (-100 to 100)"); return ok(); }
         if (cmd == "popOutView")
         {
             const auto view = p.getProperty ("view", {}).toString();
@@ -274,6 +276,13 @@ private:
             return ok();
         }
         if (cmd == "closePanelWindow") { if (onClosePanel) onClosePanel(); return ok(); }
+        if (cmd == "closeWindow")
+        {
+            const auto key = p.getProperty ("key", {}).toString(); if (key != "strips" && key != "rack" && key != "mixer" && key != "settings" && key != "eq" && key != "panel") return fail ("key must be strips, rack, mixer, settings, eq or panel");
+            if (onCloseWindow) juce::MessageManager::callAsync ([fn = onCloseWindow, key] { fn (key); });
+            return ok();
+        }
+        if (cmd == "quit") { if (onQuit) juce::MessageManager::callAsync ([fn = onQuit] { fn(); }); return ok(); }
         if (cmd == "selectTrack") { engine.selectTrack (inum (p, "track", 0)); return ok(); }
         if (cmd == "groove") { if (! engine.editGrooveChan (inum (p, "ch", 0), p.getProperty ("key", {}).toString(), p.getProperty ("value", {}))) return fail ("ch must be 1 to 31, key one of on, patch (an existing patch name or empty), strength, timing, vel, len, rand, slide, shuffle, anchor"); return ok(); }
         if (cmd == "extractGroove") { juce::String err; const int n = engine.extractGroove (inum (p, "contentId", 0), p.getProperty ("name", {}).toString(), num (p, "grid"), err); if (n == 0) return fail (err); auto* o = new juce::DynamicObject(); o->setProperty ("patches", n); o->setProperty ("name", engine.grooveCopy().patches.back().name); return ok (juce::var (o)); }
@@ -408,7 +417,7 @@ private:
                     }
                     else o->setProperty ("text", mode == "sample" ? "saved as a new sample in the bounced-samples folder" : "saved");
                     emit ("bounce", juce::var (o));
-                }, track);
+                }, track, ! (mode == "place" || mode == "recording"));
             };
             static const bool testMode4 = juce::SystemStats::getEnvironmentVariable ("ASKARCHIE_HOST_TEST", {}) == "1";
             if (mode == "disk" && ! (testMode4 && p.hasProperty ("path")))

@@ -2,6 +2,35 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.149",
+      "date": "2026-11-26",
+      "title": "Master tune for audio clips",
+      "notes": [
+        "New in Settings, Audio: Master tune, from -100 to 100 cent. It retunes recorded and imported sounds and keeps their length. 100 cent is one semitone.",
+        "It does not change instruments or plug-ins: tune those in their own windows. A clip takes a moment to be retuned and plays as before until it is ready.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
+      "version": "0.1.148",
+      "date": "2026-11-26",
+      "title": "Render with the sound card's buffer size",
+      "notes": [
+        "New in Settings, Audio: Render audio using the audio card buffer size. Tick it if a plug-in sounds different in an exported or bounced file than it does while playing. It is unticked unless you choose it."
+      ]
+    },
+    {
+      "version": "0.1.147",
+      "date": "2026-11-26",
+      "title": "Shortcuts, menu items and Play in background",
+      "notes": [
+        "Shortcuts that now work: Ctrl+N new song, Ctrl+W close the window or song, F2 spectrum EQ, F4 on-screen piano, F7 sequencer only, F8 Edit Area, F9 browser.",
+        "Also: Ctrl+F opens the browser, Ctrl+B opens it for the selected track, and Ctrl+Delete deletes the selection.",
+        "Menus: Song Information, Preferences and Exit now work. Exit asks first.",
+        "New in Settings, Audio: Play in background. Untick it and the program stops and lets the sound card go when you switch to another program, then takes it back when you return."
+      ]
+    },
+    {
       "version": "0.1.146",
       "date": "2026-11-26",
       "title": "The last track can be deleted",

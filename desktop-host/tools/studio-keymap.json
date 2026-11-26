@@ -11,6 +11,9 @@
   "uiCommands": {
     "ui.viewMixer": "show the Mixer view",
     "ui.viewRack": "show the Rack view",
+    "ui.openBrowser": "open the browser",
+    "ui.preferences": "preferences",
+    "ui.songInfo": "song information",
     "ui.cue1": "hot cue 1",
     "ui.cue2": "hot cue 2",
     "ui.cue3": "hot cue 3",
@@ -155,7 +158,7 @@
       ],
       "command": "ui.newProject",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Create new Song"
     },
     {
@@ -164,7 +167,7 @@
       ],
       "command": "ui.closeWindow",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: close the active detached Rack or Mixer window / close the Song"
     },
     {
@@ -228,7 +231,7 @@
       ],
       "command": "ui.viewSequencer",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Show Sequencer Only"
     },
     {
@@ -237,7 +240,7 @@
       ],
       "command": "ui.toggleEditArea",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Show/Hide Edit Area"
     },
     {
@@ -246,7 +249,7 @@
       ],
       "command": "ui.showSpectrum",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Spectrum EQ window (ours: the Analyser)"
     },
     {
@@ -273,16 +276,16 @@
       ],
       "command": "ui.showBrowser",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Show/hide Browser"
     },
     {
       "keys": [
         "Ctrl+F"
       ],
-      "command": "ui.showBrowser",
+      "command": "ui.openBrowser",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Open Browser without Browse Focus"
     },
     {
@@ -291,7 +294,7 @@
       ],
       "command": "ui.browseForSelected",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Open Browser with Browse Focus for the selected device"
     },
     {
@@ -309,7 +312,7 @@
       ],
       "command": "ui.showOnScreenPiano",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: On-screen Piano Keys window"
     },
     {
@@ -337,7 +340,7 @@
       ],
       "command": "ui.deleteNoWarning",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: delete without warning"
     },
     {

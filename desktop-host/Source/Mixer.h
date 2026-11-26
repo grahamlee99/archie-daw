@@ -972,7 +972,7 @@ public:
             {
                 if (in.muted) continue;
                 const AudioData* A = in.content != nullptr ? in.content->audio.get() : nullptr;
-                if (in.pitched != nullptr && in.transpose != 0.0 && ! (in.warp && in.srcBpm > 0.0 && in.length > 0.0)) A = in.pitched.get();          // the same sound, moved in pitch (same length, so the offset, loop and reverse below are unchanged)
+                if (in.pitched != nullptr && ! (in.warp && in.srcBpm > 0.0 && in.length > 0.0)) A = in.pitched.get();          // the same sound, moved in pitch (same length, so the offset, loop and reverse below are unchanged)
                 const bool isW = in.warped != nullptr && in.warp;                   // the stretched version: already laid out for this clip, so it plays from its own start, forwards
                 if (isW) A = in.warped.get();
                 if (A == nullptr || A->numSamples() < 2) continue;

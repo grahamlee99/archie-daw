@@ -89,6 +89,8 @@ public:
             w->show (q);
         };
         bridge.onClosePanel = [this] { auto it = panels.find ("panel"); if (it != panels.end() && it->second != nullptr) it->second->setVisible (false); };
+        bridge.onCloseWindow = [this] (const juce::String& key) { auto it = panels.find (key); if (it != panels.end() && it->second != nullptr) it->second->closeButtonPressed(); };
+        bridge.onQuit = [] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); };
         bridge.onSkin = [this] (const juce::var& skin) { applySkin (skin); };
         applySkin (bridge.getSkin());
         bridge.onNavigateStudio = [this] (const juce::String& path) { ensureWeb(); webPath = path; web->wantUrl (studioBase + path); webLoaded = true; };
@@ -99,7 +101,7 @@ public:
         showTab (0);
     }
 
-    ~MainComponent() override { if (transportDock != nullptr) bridge.removeBrowser (transportDock.get()); bridge.onOpenPanel = nullptr; bridge.onClosePanel = nullptr; panels.clear(); bridge.removeBrowser (console.get()); bridge.removeBrowser (web.get()); }
+    ~MainComponent() override { if (transportDock != nullptr) bridge.removeBrowser (transportDock.get()); bridge.onOpenPanel = nullptr; bridge.onClosePanel = nullptr; bridge.onCloseWindow = nullptr; bridge.onQuit = nullptr; panels.clear(); bridge.removeBrowser (console.get()); bridge.removeBrowser (web.get()); }
 
     // The online page is created the first time it is asked for. The web view builds its browsers one at a time, so a hidden second browser must not queue ahead of the visible one.
     void ensureWeb()

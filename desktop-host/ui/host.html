@@ -906,9 +906,12 @@
       <div class="setnote">The program uses the latency the sound card reports to place a recording against the music. If the reported figure is wrong, recorded audio lands early or late. If recorded audio plays back too late, raise the adjustment; if too early, lower it.</div>
       <div class="setrow"><span>Max audio threads</span><span><select id="iMaxThr"><option value="-1">Automatic</option><option value="0">0 (one thread)</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option></select> <span class="tiny" id="setCores"></span></span></div>
       <div class="setnote">More threads give more power for many tracks and plug-ins; fewer leave room for other programs. It takes effect the next time the program starts.</div>
-      <div class="setrow"><span>Master tune</span><span><input type="number" value="0" disabled style="width:80px"> cent <span class="nb">not built</span></span></div>
-      <div class="setrow"><span>Render audio using the audio card buffer size</span><span><input type="checkbox" disabled> <span class="nb">not built</span></span></div>
-      <div class="setrow"><span>Play in background</span><span><input type="checkbox" disabled> <span class="nb">not built</span></span></div>
+      <div class="setrow"><span>Master tune (audio clips only)</span><span><input type="number" id="iTune" min="-100" max="100" step="1" value="0" style="width:80px"> cent</span></div>
+      <div class="setnote">Retunes recorded and imported sounds, keeping their length. Instruments and plug-ins are not changed: tune those in their own windows. A clip takes a moment to be retuned and plays as before until it is ready. 100 cent is one semitone; double-click for 0.</div>
+      <div class="setrow"><span>Render audio using the audio card buffer size</span><span><input type="checkbox" id="iRenderCard"></span></div>
+      <div class="setnote">Applies to Export and Bounce. Ticked: the sound is worked out in pieces the size of your sound card's buffer, as when playing, which helps if a plug-in sounds different in an exported file. Unticked (usual): pieces of 512 samples.</div>
+      <div class="setrow"><span>Play in background</span><span><input type="checkbox" id="iPlayBg" checked></span></div>
+      <div class="setnote">Ticked: Archie DAW keeps the sound card and keeps playing when you switch to another program. Unticked: when you switch away it stops and lets the sound card go, so another program can use it (useful with ASIO), and takes it back when you return. It never lets go while recording.</div>
       <div class="tiny" id="devInfo" style="margin-top:10px"></div>
     </section>
     <section class="setpage" data-page="midi"><h2>MIDI</h2>
@@ -1283,6 +1286,10 @@
   $("setHelp").onclick = function () { host("openManual").then(function (r) { if (r && r.ok === false) log(r.error, true); }); };
   $("bUnused").onclick = function () { deleteUnusedFlow(); };
   $("bConnectAll").onclick = function () { host("deviceLinkAll", { on: true }).then(function (r) { if (r && r.ok === false) log(r.error, true); else if (r) log(r.devices ? ("Connecting " + r.connected + " of " + r.devices + " Archie device" + (r.devices === 1 ? "" : "s") + (r.notes ? ". " + r.notes : "")) : "There is no Archie device in the rack to connect yet.", !r.devices || !!r.notes); }); };
+  $("iTune").onchange = function () { var v = Math.max(-100, Math.min(100, Math.round(parseFloat(this.value) || 0))); this.value = v; host("audioOption", { masterTuneCents: v }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); };
+  $("iTune").ondblclick = function () { this.value = 0; this.onchange(); };
+  $("iRenderCard").onchange = function () { host("audioOption", { renderWithCardBuffer: this.checked }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); };
+  $("iPlayBg").onchange = function () { host("audioOption", { playInBackground: this.checked }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); };
   $("iLatAdj").onchange = function () { host("audioOption", { latencyAdjustMs: parseFloat(this.value) || 0 }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); };
   $("iMaxThr").onchange = function () { host("audioOption", { maxThreads: parseInt(this.value, 10) }).then(function (r) { if (r && r.ok === false) log(r.error, true); else log("Max audio threads saved. It takes effect the next time the program starts."); }); };
   function drawAudioPage(st) {
@@ -1291,6 +1298,9 @@
     $("setIns").textContent = (st.inputs || []).length ? (st.inputs || []).length + " input channel" + ((st.inputs || []).length === 1 ? "" : "s") + ": " + (st.inputs || []).join(", ") : "none";
     $("setLatIn").textContent = (st.inputLatencyMs || 0).toFixed(1) + " ms"; $("setLatOut").textContent = (st.outputLatencyMs || 0).toFixed(1) + " ms";
     if (document.activeElement !== $("iLatAdj")) $("iLatAdj").value = st.latencyAdjustMs || 0;
+    $("iPlayBg").checked = st.playInBackground !== false;
+    $("iRenderCard").checked = !!st.renderWithCardBuffer;
+    if (document.activeElement !== $("iTune")) $("iTune").value = st.masterTuneCents || 0;
     if (document.activeElement !== $("iMaxThr")) $("iMaxThr").value = String(st.maxThreads === undefined ? -1 : st.maxThreads);
     $("setCores").textContent = st.cpuCores ? "(this computer has " + st.cpuCores + " cores)" : "";
   }
@@ -2139,6 +2149,26 @@
     "ui.toolSelect": function () { setTool("select"); }, "ui.toolPencil": function () { setTool("pencil"); }, "ui.toolEraser": function () { setTool("eraser"); }, "ui.toolHand": function () { setTool("hand"); },
     "ui.toolZoom": function () { setTool("zoom"); }, "ui.toolRazor": function () { setTool("razor"); }, "ui.toolListen": function () { setTool("listen"); },
     "ui.tapTempo": function () { $("bTap").click(); },
+    "ui.newProject": function () { confirmBox("Start a new, empty song? Anything in the open song that is not saved is lost.", "New song", function () { host("newProject"); }); },
+    "ui.closeWindow": function () {      // a window of its own closes; in the main window it is the song that closes
+      var key = VIEWWIN || (SETWIN ? "settings" : /[?&]eqwin=/.test(location.search) ? "eq" : PANEL ? "panel" : "");
+      if (key) { host("closeWindow", { key: key }); return; }
+      confirmBox("Close this song? It becomes a new, empty song, and anything not saved is lost.", "Close song", function () { host("newProject"); });
+    },
+    "ui.viewSequencer": function () { if (!MAIN) return false; setMode("seq"); closeDock(); qlDraw(); },
+    "ui.toggleEditArea": function () { if (!MAIN) return false; toggleDock(); qlDraw(); },
+    "ui.showBrowser": function () { if (!MAIN) return false; lcToggle(); },
+    "ui.openBrowser": function () { if (!MAIN) return false; lcSet(false); },
+    "ui.browseForSelected": function () {      // the browser, on what the selected track can still take: an instrument if it has none, otherwise effects
+      if (!MAIN) return false; var t = S.state && S.state.tracks && S.state.tracks[S.sel], has = !!(t && (t.slots || []).some(function (s) { return s.instrument; }));
+      lcSet(false); UI_COMMANDS[has ? "ui.addEffect" : "ui.addInstrument"]();
+    },
+    "ui.showSpectrum": function () { var master = !!(S.tp && S.tp.kind === "master") || !(S.state && S.state.tracks && S.state.tracks.length); host("openEqWindow", { chain: master ? 200 : S.sel }).then(function (r) { if (r && !r.ok) log(r.error, true); }); },
+    "ui.showOnScreenPiano": function () { if (!MAIN) return false; pianoToggle(); qlDraw(); },
+    "ui.deleteNoWarning": function () { return UI_COMMANDS["ui.delete"](); },
+    "ui.preferences": function () { openSettings(""); },
+    "ui.songInfo": function () { songInfo(); },
+    "ui.exit": function () { confirmBox("Close Archie DAW? Anything in the open song that is not saved is lost.", "Exit", function () { host("quit"); }); },
     "ui.cue1": function () { cuePress(0); }, "ui.cue2": function () { cuePress(1); }, "ui.cue3": function () { cuePress(2); },
     "ui.splitAtPlayhead": function () { if (!findInst(S.selInst)) return false; $("aSplit").click(); },
     "ui.addInstrument": function () { DB.tab = "instrument"; DB.cat = ""; DB.sig = ""; $("dbBody").style.display = ""; $("dbToggle").textContent = "Hide"; drawBrowser(S.state); $("dbSearch").focus(); $("dbBar").scrollIntoView(); },
@@ -2779,15 +2809,15 @@
     var u = function () { return S.state && S.state.undo || {}; };
     return {
       File: [
-        { label: "New", run: function () { confirmBox("Start a new, empty song? Anything in the open song that is not saved is lost.", "New song", function () { host("newProject"); }); } }, { label: "New from Template", sub: templateMenu }, "-", { label: "Open...", cmd: "loadProject" }, { label: "Open Recent", sub: recentMenu }, { label: "Close", run: function () { confirmBox("Close this song? It becomes a new, empty song, and anything not saved is lost.", "Close song", function () { host("newProject"); }); } }, "-",
-        { label: "Save", cmd: "saveProject" }, { label: "Save As...", cmd: "ui.saveProjectAs" }, { label: "Save as Template...", run: function () { promptBox("Name this template", "My template", function (nm) { host("saveTemplate", { name: nm }).then(function (r) { if (r && r.ok === false) log(r.error, true); else refreshFiles(); }); }); } }, N("Save and Optimize"), "-", N("Song Information..."), "-",
-        { label: "Import Audio File...", cmd: "loadFile" }, { label: "Import MIDI File...", cmd: "importMidi" }, { label: "Export MIDI File...", cmd: "exportMidi" }, { label: "Export Song as Audio File", sub: [{ label: "24-bit wav", run: function () { host("exportAudio", { bits: 24 }); } }, { label: "16-bit wav", run: function () { host("exportAudio", { bits: 16 }); } }, { label: "32-bit float wav", run: function () { host("exportAudio", { bits: 32 }); } }] }, { label: "Export Loop as Audio File...", off: function () { var t = S.tr || {}; return !(t.loopEnd > t.loopStart + 0.01); }, hint: "make a loop first", run: function () { var t = S.tr || {}; host("exportAudio", { bits: 24, from: t.loopStart, to: t.loopEnd, name: "Archie DAW loop" }); } }, { label: "Cancel the Export", run: function () { host("cancelExport"); } }, { label: "Bounce", sub: function () { return bounceMenu(findInst(S.selInst)); } }, "-", N("Exit")
+        { label: "New", cmd: "ui.newProject" }, { label: "New from Template", sub: templateMenu }, "-", { label: "Open...", cmd: "loadProject" }, { label: "Open Recent", sub: recentMenu }, { label: "Close", cmd: "ui.closeWindow" }, "-",
+        { label: "Save", cmd: "saveProject" }, { label: "Save As...", cmd: "ui.saveProjectAs" }, { label: "Save as Template...", run: function () { promptBox("Name this template", "My template", function (nm) { host("saveTemplate", { name: nm }).then(function (r) { if (r && r.ok === false) log(r.error, true); else refreshFiles(); }); }); } }, N("Save and Optimize"), "-", { label: "Song Information...", cmd: "ui.songInfo" }, "-",
+        { label: "Import Audio File...", cmd: "loadFile" }, { label: "Import MIDI File...", cmd: "importMidi" }, { label: "Export MIDI File...", cmd: "exportMidi" }, { label: "Export Song as Audio File", sub: [{ label: "24-bit wav", run: function () { host("exportAudio", { bits: 24 }); } }, { label: "16-bit wav", run: function () { host("exportAudio", { bits: 16 }); } }, { label: "32-bit float wav", run: function () { host("exportAudio", { bits: 32 }); } }] }, { label: "Export Loop as Audio File...", off: function () { var t = S.tr || {}; return !(t.loopEnd > t.loopStart + 0.01); }, hint: "make a loop first", run: function () { var t = S.tr || {}; host("exportAudio", { bits: 24, from: t.loopStart, to: t.loopEnd, name: "Archie DAW loop" }); } }, { label: "Cancel the Export", run: function () { host("cancelExport"); } }, { label: "Bounce", sub: function () { return bounceMenu(findInst(S.selInst)); } }, "-", { label: "Exit", cmd: "ui.exit" }
       ],
       Edit: [
         { label: function () { return "Undo" + (u().canUndo ? " " + u().undoLabel : ""); }, off: function () { return !canUndo(); }, cmd: "undo" },
         { label: function () { return "Redo" + (u().canRedo ? " " + u().redoLabel : ""); }, off: function () { return !(S.state && S.state.undo && S.state.undo.canRedo); }, cmd: "redo" }, "-",
         { label: "Cut", cmd: "ui.cut" }, { label: "Copy", cmd: "ui.copy" }, { label: "Paste", cmd: "ui.paste" }, { label: "Delete", cmd: "ui.delete" }, { label: "Duplicate", cmd: "ui.duplicate" }, { label: "Select All", cmd: "ui.selectAll" }, "-",
-        { label: "Quantise Notes to Snap", run: function () { $("rQ").click(); } }, { label: "Quantise Sound Clips", run: function () { $("aQuant").click(); } }, "-", N("Preferences...")
+        { label: "Quantise Notes to Snap", run: function () { $("rQ").click(); } }, { label: "Quantise Sound Clips", run: function () { $("aQuant").click(); } }, "-", { label: "Preferences...", cmd: "ui.preferences" }
       ],
       Create: [
         { label: "Add Audio Track", cmd: "addTrack" }, { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, N("Add Player..."), N("Create Send FX..."), N("Add Mix Channel"), "-",
@@ -2795,7 +2825,7 @@
       ],
       View: [
         { label: "Show Strips", checked: function () { return S.view === "strips"; }, run: function () { setView("strips"); } }, { label: "Show Mixer", checked: function () { return S.view === "mixer"; }, cmd: "ui.viewMixer" }, { label: "Show Rack", checked: function () { return S.view === "rack"; }, cmd: "ui.viewRack" }, "-",
-        { label: "Device Browser", cmd: "ui.showDevicePalette" }, { label: "Track Panel", run: scrollTo("tpBar") }, { label: "Clips on the Timeline", run: scrollTo("rollBar") && function () { var a = document.querySelector(".bar:has(#arr)"); if (a) a.scrollIntoView(); } },
+        { label: "Device Browser", cmd: "ui.showBrowser" }, { label: "Edit Area", cmd: "ui.toggleEditArea" }, { label: "Sequencer Only", cmd: "ui.viewSequencer" }, { label: "Spectrum EQ", cmd: "ui.showSpectrum" }, { label: "On-screen Piano", cmd: "ui.showOnScreenPiano" }, { label: "Track Panel", run: scrollTo("tpBar") }, { label: "Clips on the Timeline", run: scrollTo("rollBar") && function () { var a = document.querySelector(".bar:has(#arr)"); if (a) a.scrollIntoView(); } },
         { label: "Piano Roll", run: scrollTo("rollBar") }, { label: "Keyboard Shortcuts", run: function () { openSettings("controls"); } }, { label: "Analyser", run: function () { openSettings("browsing"); } }, "-",
         { label: "Collapse All Automation Lanes", run: function () { foldLanes(null, true); } }, { label: "Open All Automation Lanes", run: function () { foldLanes(null, false); } }, "-",
         { label: "Zoom In (timeline)", run: function () { zoomBy(1.4); } }, { label: "Zoom Out (timeline)", run: function () { zoomBy(1 / 1.4); } }, "-",
@@ -3413,6 +3443,23 @@
     function close() { ov.remove(); } no.onclick = function () { close(); if (onNo) onNo(); }; ys.onclick = function () { close(); yes(); };
     bx.appendChild(p); bx.appendChild(no); bx.appendChild(ys); ov.appendChild(bx); document.body.appendChild(ov); no.focus();
   }
+  // SONG INFORMATION: what is in the open song, read from what is already on screen (nothing is kept or sent)
+  function songInfoText(st, tr, arr, file) {
+    var tracks = st.tracks || [], clips = 0, end = 0, plugs = {};
+    tracks.forEach(function (t, i) { var a = arr[i]; ((a && a.instances) || []).forEach(function (c) { clips++; end = Math.max(end, c.start + (c.length || c.contentLength || 0)); }); });
+    tracks.concat(st.returns || [], st.masterSection ? [st.masterSection] : []).forEach(function (t) { (t.slots || []).forEach(function (s) { plugs[s.name] = (plugs[s.name] || 0) + 1; }); });
+    var bar = (tr.tsNum || 4) * 4 / (tr.tsDen || 4), secs = end * 60 / (tr.bpm || 120), names = Object.keys(plugs).sort();
+    return ["Song: " + (file ? file.split(/[\\/]/).pop().replace(/\.archiestudio$/, "") : "not saved yet"), file ? "File: " + file : "",
+      "Tempo: " + (+(tr.bpm || 120)).toFixed(2) + " bpm" + ((tr.tempoMap || []).length > 1 ? " at the start (the tempo changes along the song)" : ""),
+      "Time signature: " + (tr.tsNum || 4) + "/" + (tr.tsDen || 4),
+      "Length: " + (end > 0 ? Math.ceil(end / bar) + " bars, about " + Math.floor(secs / 60) + " min " + Math.round(secs % 60) + " s" : "nothing on the timeline yet"),
+      "Tracks: " + tracks.length + ", clips and blocks: " + clips,
+      "Plug-ins: " + (names.length ? "\n  " + names.map(function (n) { return n + (plugs[n] > 1 ? " x " + plugs[n] : ""); }).join("\n  ") : "none")].filter(Boolean).join("\n");
+  }
+  function songInfo() {
+    host("getFiles").then(function (r) { if (!S.state) return; infoBox(songInfoText(S.state, S.tr || {}, S.arr || {}, (r && r.current) || "")); });
+  }
+  function infoBox(text) { confirmBox(text, "OK", function () { }); var all = document.body.lastElementChild; var b = all && all.querySelector("button"); if (b) b.style.display = "none"; }
   function deleteUnusedFlow() {
     host("unusedRecordings").then(function (r) {
       var d = r && (r.result || r.data || r); if (!d || !d.count) { log("There are no unused recordings."); return; }

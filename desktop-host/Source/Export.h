@@ -51,12 +51,14 @@ class MixdownJob : private juce::Timer, private juce::Thread
 {
 public:
     // fromBeat/toBeat < 0 = the whole song; `bits` 16, 24 or 32 (32 = floating point)
-    MixdownJob (HostEngine& live, juce::File outFile, int bits, double fromBeat, double toBeat, double tailSec, std::function<void (const juce::var&)> report, int onlyTrackIndex = -1)
+    MixdownJob (HostEngine& live, juce::File outFile, int bits, double fromBeat, double toBeat, double tailSec, std::function<void (const juce::var&)> report, int onlyTrackIndex = -1, bool withMasterTune = true)
         : juce::Thread ("Archie export"), file (std::move (outFile)), bitDepth (bits == 16 || bits == 32 ? bits : 24), from (fromBeat), to (toBeat), tail (tailSec), emit (std::move (report)), rate (live.sampleRate), only (onlyTrackIndex)
     {
         project = live.saveProject();
         copy = std::make_unique<HostEngine>();
-        copy->prepareOffline (rate, 512, 3);
+        piece = live.renderPieceSize();
+        copy->prepareOffline (rate, piece, 3);
+        copy->masterTuneCents.store (withMasterTune ? live.masterTuneCents.load() : 0);      // a bounce that returns to the song as a clip is tuned there, so not in the file as well
         copy->loadProject (project, [this] (juce::String err) { loadError = err; loaded = true; });
         startTimer (100);
     }
@@ -85,7 +87,7 @@ private:
         if (w == nullptr) { finish ("Could not start the audio file.", {}); return; }
         out.release();
         float peak = 0.0f; std::atomic<double> prog { 0.0 }; double lastReport = -1.0;
-        const long long n = renderMixdown (*copy, a, b, tail, 512, [&] (const float* l, const float* r, int count)
+        const long long n = renderMixdown (*copy, a, b, tail, piece, [&] (const float* l, const float* r, int count)
         {
             const float* ch[2] = { l, r }; w->writeFromFloatArrays (ch, 2, count);
             for (int i = 0; i < count; ++i) peak = juce::jmax (peak, std::abs (l[i]), std::abs (r[i]));
@@ -107,7 +109,7 @@ private:
         });
     }
 
-    juce::File file; int bitDepth; double from, to, tail, a = 0.0, b = 0.0; std::function<void (const juce::var&)> emit; double rate; int only; bool muteApplied = false;
+    juce::File file; int bitDepth; double from, to, tail, a = 0.0, b = 0.0; std::function<void (const juce::var&)> emit; double rate; int only; bool muteApplied = false; int piece = 512;
     juce::var project; std::unique_ptr<HostEngine> copy; std::atomic<bool> cancelFlag { false }, finished { false }; bool loaded = false; juce::String loadError;
 };
 

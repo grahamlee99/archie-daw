@@ -946,16 +946,16 @@ public:
     juce::ThreadPool warpPool { 1 };                                // (after the mutex and the list it reports into, so it is joined first)
     uint64_t warpKeyFor (const ClipInst& in, const std::vector<TempoEntry>& tempo) const
     {
-        juce::String s = juce::String::formatted ("%d|%.9f|%.9f|%.9f|%.6f|%d|%d|%.1f|t%.4f:%d|", in.content ? in.content->id : 0, in.start, in.length, in.offset, in.srcBpm, in.reverse ? 1 : 0, in.repitch ? 1 : 0, sampleRate, in.transpose, in.keepFormant ? 1 : 0);
+        juce::String s = juce::String::formatted ("%d|%.9f|%.9f|%.9f|%.6f|%d|%d|%.1f|t%.4f:%d|", in.content ? in.content->id : 0, in.start, in.length, in.offset, in.srcBpm, in.reverse ? 1 : 0, in.repitch ? 1 : 0, sampleRate, clipSemis (in), in.keepFormant ? 1 : 0);
         for (const auto& e : tempo) s << juce::String::formatted ("%.6f:%.6f;", e.beat, e.bpm);
         if (! in.reverse) for (const auto& m : in.markers) s << juce::String::formatted ("m%.6f:%.6f;", m.sec, m.beat);
         return (uint64_t) s.hashCode64();
     }
-    uint64_t pitchKeyFor (const ClipInst& in) const { return (uint64_t) juce::String::formatted ("p%d|%.4f|%d|%.1f", in.content ? in.content->id : 0, in.transpose, in.keepFormant ? 1 : 0, sampleRate).hashCode64(); }
+    uint64_t pitchKeyFor (const ClipInst& in) const { return (uint64_t) juce::String::formatted ("p%d|%.4f|%d|%.1f", in.content ? in.content->id : 0, clipSemis (in), in.keepFormant ? 1 : 0, sampleRate).hashCode64(); }
     void schedulePitch (const ClipInst& in, uint64_t key)
     {
         if (! warpInFlight.insert (key).second) return;
-        auto src = in.content->audio; const double semis = in.transpose; const bool keep = in.keepFormant; const int id = in.id;
+        auto src = in.content->audio; const double semis = clipSemis (in); const bool keep = in.keepFormant; const int id = in.id;
         warpPool.addJob ([this, src, semis, keep, key, id]
         {
             auto out = retunePitch (*src, [semis] (double) { return semis; }, keep, &warpCancel);
@@ -966,7 +966,7 @@ public:
     {
         if (! warpInFlight.insert (key).second) return;
         WarpParams wp; wp.startBeat = in.start; wp.lengthBeats = in.length; wp.offsetSec = in.offset; wp.srcBpm = in.srcBpm; wp.reverse = in.reverse; wp.repitch = in.repitch; wp.markers = in.markers;
-        auto src = in.content->audio; const double rate = sampleRate > 0.0 ? sampleRate : 48000.0; const int id = in.id; const double semis = in.transpose; const bool keep = in.keepFormant;
+        auto src = in.content->audio; const double rate = sampleRate > 0.0 ? sampleRate : 48000.0; const int id = in.id; const double semis = clipSemis (in); const bool keep = in.keepFormant;
         warpPool.addJob ([this, src, wp, tempo, rate, key, id, semis, keep]
         {
             TempoMap tm (tempo);
@@ -982,7 +982,7 @@ public:
         for (auto& in : v)
         {
             // a clip that is not warped but is transposed plays its whole source moved in pitch (the render does not depend on the tempo)
-            if (in.content && in.content->audio && in.transpose != 0.0 && ! (in.warp && in.srcBpm > 0.0 && in.length > 0.0))
+            if (in.content && in.content->audio && clipSemis (in) != 0.0 && ! (in.warp && in.srcBpm > 0.0 && in.length > 0.0))
             {
                 const auto pk = pitchKeyFor (in); if (in.pitched == nullptr || in.pitchKey != pk) { in.pitched = nullptr; in.pitchKey = 0; schedulePitch (in, pk); }
             }
@@ -1004,7 +1004,7 @@ public:
             if (r.data == nullptr) continue;
             int idx = -1; const int track = trackOfInstance (r.instId, &idx); if (track < 0) continue;
             auto ins = instsOf (*tracks[(size_t) track]); auto& in = (*ins)[(size_t) idx];
-            if (r.pitchOnly) { if (in.content && in.content->audio && in.transpose != 0.0 && pitchKeyFor (in) == r.key) { in.pitched = r.data; in.pitchKey = r.key; putArr (track, ins); stateDirty.store (true); } continue; }
+            if (r.pitchOnly) { if (in.content && in.content->audio && clipSemis (in) != 0.0 && pitchKeyFor (in) == r.key) { in.pitched = r.data; in.pitchKey = r.key; putArr (track, ins); stateDirty.store (true); } continue; }
             if (! in.warp || ! in.content || ! in.content->audio || warpKeyFor (in, tempo) != r.key) continue;         // changed again while it was being made
             in.warped = r.data; in.warpKey = r.key; putArr (track, ins); stateDirty.store (true);
         }
@@ -1275,22 +1275,74 @@ public:
     double recordLatencyOverrideSec = -1.0;                     // tests set this; normally the sound card's own figure is used
     // AUDIO OPTIONS (Settings, Audio page), saved in the settings folder: a manual latency adjustment (ms, added to the figure the sound card reports, for placing a recording) and the most audio threads to use (-1 = a sensible number for this computer; it takes effect the next time the program starts)
     std::atomic<double> latencyAdjustMs { 0.0 }; std::atomic<int> maxThreadsSetting { -1 };
+    // PLAY IN BACKGROUND (on by default). Off: when another program comes to the front the song is paused and the sound card let go (an ASIO driver serves one program at a time), and it is taken back on return.
+    // MASTER TUNE, FOR AUDIO CLIPS ONLY (-100 to 100 cents, 0 = off). Recorded and imported sounds are moved in pitch, on top of each clip's own transpose, with their length unchanged. Instruments and plug-ins are NOT
+    // retuned: there is no tuning command every plug-in obeys. Like a transpose, the new sound is made in the background and the clip plays as it was until it is ready.
+    std::atomic<int> masterTuneCents { 0 };
+    double clipSemis (const ClipInst& in) const { return in.transpose + (double) masterTuneCents.load() / 100.0; }
+    void retuneClips()
+    {
+        for (int ti = 0; ti < trackCount.load(); ++ti) { bool any = false; for (const auto& in : tracks[(size_t) ti]->arrSnap.load()->insts) any = any || (in.content && in.content->audio); if (any) putArr (ti, instsOf (*tracks[(size_t) ti])); }
+    }
+    // RENDER WITH THE SOUND CARD'S BUFFER (off by default). On: an export or bounce works in pieces the size of the card's buffer, so a plug-in that behaves differently with the piece size sounds as it did while playing.
+    std::atomic<bool> renderWithCardBuffer { false };
+    int renderPieceSize() const { return renderWithCardBuffer.load() && blockSize > 0 ? juce::jlimit (16, 8192, blockSize) : 512; }
+    std::atomic<bool> playInBackground { true }; bool audioReleased = false; double awaySince = 0.0, nextRestore = 0.0;
+    enum class Background { nothing, release, restore };
+    static Background backgroundAction (bool keepPlaying, bool inFront, bool released, bool recording, double secondsAway)
+    {
+        if (released) return keepPlaying || inFront ? Background::restore : Background::nothing;
+        return ! keepPlaying && ! inFront && ! recording && secondsAway >= 1.0 ? Background::release : Background::nothing;      // a second's grace, so a passing pop-up never drops the sound; never while recording
+    }
+    static bool programIsInFront()
+    {
+       #if JUCE_WINDOWS
+        HWND fg = GetForegroundWindow(); if (fg == nullptr) return true;
+        DWORD a = 0, b = 0; GetWindowThreadProcessId (fg, &a); if (auto root = GetAncestor (fg, GA_ROOTOWNER)) GetWindowThreadProcessId (root, &b);      // a pop-up of our own web view belongs to us
+        return a == GetCurrentProcessId() || b == GetCurrentProcessId();
+       #else
+        return juce::Process::isForegroundProcess();
+       #endif
+    }
+    void serviceBackground()
+    {
+        const bool keep = playInBackground.load(); if (keep && ! audioReleased) { awaySince = 0.0; return; }
+        const double now = juce::Time::getMillisecondCounterHiRes() / 1000.0; const bool front = keep || programIsInFront();
+        if (front) awaySince = 0.0; else if (awaySince <= 0.0) awaySince = now;
+        const auto act = backgroundAction (keep, front, audioReleased, transport.recording.load(), front ? 0.0 : now - awaySince);
+        if (act == Background::release && deviceManager.getCurrentAudioDevice() != nullptr)
+        {
+            if (transport.playing.load()) transport.stop();
+            deviceManager.closeAudioDevice(); audioReleased = true; stateDirty.store (true);
+        }
+        else if (act == Background::restore && now >= nextRestore)
+        {
+            deviceManager.restartLastAudioDevice(); nextRestore = now + 2.0;      // another program may still hold it: try again shortly
+            if (deviceManager.getCurrentAudioDevice() != nullptr) { audioReleased = false; stateDirty.store (true); }
+        }
+    }
     juce::File audioOptionsFile() const { return settingsDir.getChildFile (juce::SystemStats::getEnvironmentVariable ("ASKARCHIE_HOST_TEST", {}) == "1" ? "audio-options-test.json" : "audio-options.json"); }
     void loadAudioOptions()
     {
-        latencyAdjustMs.store (0.0); maxThreadsSetting.store (-1);
+        latencyAdjustMs.store (0.0); maxThreadsSetting.store (-1); playInBackground.store (true); renderWithCardBuffer.store (false); masterTuneCents.store (0);
         const auto f = audioOptionsFile(); if (! f.existsAsFile()) return;
         const auto v = juce::JSON::parse (f); if (! v.isObject()) return;
         latencyAdjustMs.store (juce::jlimit (-200.0, 200.0, (double) v.getProperty ("latencyAdjustMs", 0.0)));
         maxThreadsSetting.store (juce::jlimit (-1, 7, (int) v.getProperty ("maxThreads", -1)));
+        playInBackground.store ((bool) v.getProperty ("playInBackground", true));
+        renderWithCardBuffer.store ((bool) v.getProperty ("renderWithCardBuffer", false));
+        masterTuneCents.store (juce::jlimit (-100, 100, (int) v.getProperty ("masterTuneCents", 0)));
     }
     bool setAudioOptions (const juce::var& p)
     {
         bool any = false;
         if (p.hasProperty ("latencyAdjustMs")) { latencyAdjustMs.store (juce::jlimit (-200.0, 200.0, (double) p.getProperty ("latencyAdjustMs", 0.0))); any = true; }
         if (p.hasProperty ("maxThreads")) { maxThreadsSetting.store (juce::jlimit (-1, 7, (int) p.getProperty ("maxThreads", -1))); any = true; }
+        if (p.hasProperty ("playInBackground")) { playInBackground.store ((bool) p.getProperty ("playInBackground", true)); any = true; }
+        if (p.hasProperty ("renderWithCardBuffer")) { renderWithCardBuffer.store ((bool) p.getProperty ("renderWithCardBuffer", false)); any = true; }
+        if (p.hasProperty ("masterTuneCents")) { const int c = juce::jlimit (-100, 100, juce::roundToInt ((double) p.getProperty ("masterTuneCents", 0))); if (masterTuneCents.exchange (c) != c) retuneClips(); any = true; }
         if (! any) return false;
-        auto* o = new juce::DynamicObject(); o->setProperty ("latencyAdjustMs", latencyAdjustMs.load()); o->setProperty ("maxThreads", maxThreadsSetting.load());
+        auto* o = new juce::DynamicObject(); o->setProperty ("latencyAdjustMs", latencyAdjustMs.load()); o->setProperty ("maxThreads", maxThreadsSetting.load()); o->setProperty ("playInBackground", playInBackground.load()); o->setProperty ("renderWithCardBuffer", renderWithCardBuffer.load()); o->setProperty ("masterTuneCents", masterTuneCents.load());
         audioOptionsFile().replaceWithText (juce::JSON::toString (juce::var (o))); stateDirty.store (true);
         return true;
     }
@@ -1394,6 +1446,7 @@ public:
     }
     void service()
     {
+        serviceBackground();
         if (cuePadsDirty.exchange (false)) { saveCuePads(); stateDirty.store (true); }
         drainAudioRecordings (true);
         servicePatterns();
@@ -2878,7 +2931,7 @@ public:
         }
         root->setProperty ("audioError", lastDeviceError);
         root->setProperty ("outputChannels", deviceManager.getCurrentAudioDevice() != nullptr ? deviceManager.getCurrentAudioDevice()->getActiveOutputChannels().countNumberOfSetBits() : 0);
-        root->setProperty ("latencyAdjustMs", latencyAdjustMs.load()); root->setProperty ("maxThreads", maxThreadsSetting.load()); root->setProperty ("cpuCores", juce::SystemStats::getNumPhysicalCpus());
+        root->setProperty ("latencyAdjustMs", latencyAdjustMs.load()); root->setProperty ("maxThreads", maxThreadsSetting.load()); root->setProperty ("playInBackground", playInBackground.load()); root->setProperty ("audioReleased", audioReleased); root->setProperty ("renderWithCardBuffer", renderWithCardBuffer.load()); root->setProperty ("masterTuneCents", masterTuneCents.load()); root->setProperty ("cpuCores", juce::SystemStats::getNumPhysicalCpus());
         juce::Array<juce::var> trs;
         for (int ti = 0; ti < trackCount.load(); ++ti)
         {
