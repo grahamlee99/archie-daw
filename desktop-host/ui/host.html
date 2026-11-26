@@ -2657,7 +2657,7 @@
     return [
       { label: "Open Instrument (plug-in window)", run: function () { openTrackDevice(ti); } }, "-",
       { label: "Cut Channels and Tracks", off: ti !== st.tracks.length - 1 || st.tracks.length <= 1, hint: "the last track only", run: function () { host("cutChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); else S.chanClip = true; }); } }, { label: "Copy Channels and Tracks", run: function () { host("copyChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); else { S.chanClip = true; log("Copied " + t.name + " (paste adds a new track at the end)"); } }); } }, { label: "Paste Channels and Tracks", off: !S.chanClip, hint: "copy a channel first", run: function () { host("pasteChannel").then(function (r) { if (r && r.ok === false) log(r.error, true); }); } },
-      { label: "Delete Channels and Tracks", off: st.tracks.length <= 1, hint: st.tracks.length <= 1 ? "there must be one track" : "", run: tool("removeTrack", { track: t.index }) }, { label: "Duplicate Channels and Tracks", run: function () { host("duplicateChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); } },
+      { label: "Delete Channels and Tracks", run: tool("removeTrack", { track: t.index }) }, { label: "Duplicate Channels and Tracks", run: function () { host("duplicateChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); } },
       "-", N("Select All in Device Group"), "-",
       N("Create Send FX..."),
       { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, N("Add Player..."), { label: "Add Audio Track", cmd: "addTrack" }, N("Add Mix Channel"), { label: "Find in Browser", cmd: "ui.searchDevices" },
@@ -2705,7 +2705,7 @@
       { label: "Import Audio File...", run: function () { S.sel = ti; host("selectTrack", { track: ti }); host("loadFile", { track: ti }); } }, "-",
       { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, { label: "Add Audio Track", cmd: "addTrack" }, "-",
       { label: "Select this Track", run: function () { selectTarget("track", ti); } }, "-",
-      { label: "Delete Track", off: !S.state || S.state.tracks.length <= 1, hint: S.state && S.state.tracks.length <= 1 ? "there must be one track" : "", run: tool("removeTrack", { track: ti }) }
+      { label: "Delete Track", off: !S.state || !S.state.tracks.length, run: tool("removeTrack", { track: ti }) }
     ];
   }
   function rulerMenu(beat) {

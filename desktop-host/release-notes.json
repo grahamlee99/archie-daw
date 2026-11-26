@@ -2,6 +2,14 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.146",
+      "date": "2026-11-26",
+      "title": "The last track can be deleted",
+      "notes": [
+        "Fixed: Delete Track in the right-click menu was greyed out when only one track was left. You can now delete every track and start from an empty song. Undo puts a track back."
+      ]
+    },
+    {
       "version": "0.1.145",
       "date": "2026-11-26",
       "title": "ASIO audio drivers",

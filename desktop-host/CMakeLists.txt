@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(ArchieStudioHost VERSION 0.1.145 LANGUAGES CXX)
+project(ArchieStudioHost VERSION 0.1.146 LANGUAGES CXX)
 # Archie Studio host (desktop): loads the person's VST3 plugins, plays them, and hosts the Ask Archie web pages in a window with one shared transport.
 # Uses the SAME JUCE tree and WebView2 SDK the Local Builder already provisions, so nothing new is downloaded to build it.
 #   cmake -S desktop-host -B D:/AskArchieHostBuild -G "Visual Studio 17 2022" -A x64
@@ -18,7 +18,7 @@ juce_add_gui_app(ArchieStudio
   ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/archie-daw-512.png"
   COMPANY_NAME "Ask Archie"
   BUNDLE_ID "net.askarchie.studio"
-  VERSION 0.1.145
+  VERSION 0.1.146
   NEEDS_WEBVIEW2 TRUE
   MICROPHONE_PERMISSION_ENABLED FALSE)
 
