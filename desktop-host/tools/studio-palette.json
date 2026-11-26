@@ -1,0 +1,129 @@
+{
+  "about": "The named colours for tracks, folders and clips (the same names Reason uses). A colour is stored as its NUMBER in this list (0..30); -1 means no colour (a clip with -1 mirrors its track's colour, a track with -1 uses the program's own look). The page and the program read this one file.",
+  "colours": [
+    {
+      "name": "Burgundy",
+      "hex": "#9b2226"
+    },
+    {
+      "name": "Red",
+      "hex": "#d62d30"
+    },
+    {
+      "name": "Orange",
+      "hex": "#e8702a"
+    },
+    {
+      "name": "Brown",
+      "hex": "#8c5a2b"
+    },
+    {
+      "name": "Ochre",
+      "hex": "#c98a2e"
+    },
+    {
+      "name": "Peach",
+      "hex": "#f0b48a"
+    },
+    {
+      "name": "Wheat",
+      "hex": "#f0d9b0"
+    },
+    {
+      "name": "Tangerine",
+      "hex": "#f79a1e"
+    },
+    {
+      "name": "Pineapple",
+      "hex": "#f7be28"
+    },
+    {
+      "name": "Lemon",
+      "hex": "#f3e82a"
+    },
+    {
+      "name": "Bright Lime",
+      "hex": "#c8e617"
+    },
+    {
+      "name": "Light Olive",
+      "hex": "#a8c850"
+    },
+    {
+      "name": "Moss Green",
+      "hex": "#c7d9b0"
+    },
+    {
+      "name": "Kelly Green",
+      "hex": "#3d9f4f"
+    },
+    {
+      "name": "Asparagus",
+      "hex": "#6b8e3d"
+    },
+    {
+      "name": "Dark Green",
+      "hex": "#0f5c2a"
+    },
+    {
+      "name": "Camouflage Green",
+      "hex": "#6f7f6a"
+    },
+    {
+      "name": "Turquoise",
+      "hex": "#2bb6a3"
+    },
+    {
+      "name": "Blue in Green",
+      "hex": "#0e8a96"
+    },
+    {
+      "name": "Powder Blue",
+      "hex": "#9bbfca"
+    },
+    {
+      "name": "Light Blue",
+      "hex": "#a9c1dc"
+    },
+    {
+      "name": "Sky Blue",
+      "hex": "#58b4e8"
+    },
+    {
+      "name": "Steel Blue",
+      "hex": "#4a74b8"
+    },
+    {
+      "name": "Slate Blue",
+      "hex": "#6070a8"
+    },
+    {
+      "name": "Dark Blue",
+      "hex": "#23337f"
+    },
+    {
+      "name": "Pink",
+      "hex": "#f6c5cc"
+    },
+    {
+      "name": "Lilac",
+      "hex": "#bb86b0"
+    },
+    {
+      "name": "Plum",
+      "hex": "#b0449f"
+    },
+    {
+      "name": "Neon Violet",
+      "hex": "#e012b8"
+    },
+    {
+      "name": "Deep Purple",
+      "hex": "#7a1a9c"
+    },
+    {
+      "name": "Graphite",
+      "hex": "#6b6b72"
+    }
+  ]
+}

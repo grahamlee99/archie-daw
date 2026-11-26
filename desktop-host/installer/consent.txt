@@ -1,0 +1,30 @@
+Archie DAW (desktop)
+
+This installs a program on your own computer. Please read this first.
+
+WHAT IT DOES
+- Archie DAW is a free program for playing and testing your VST3 plug-ins, especially the ones you build with the Ask Archie VST Builder. It plays them from a keyboard, MIDI or a pattern, and shows pages from askarchie.net inside its own window.
+- It has one shared transport (play, stop, record, tempo, position) that the plug-ins and the web pages follow together. It can also send and follow MIDI clock, MIDI Time Code and MIDI Machine Control, but only if you switch those on and choose a MIDI device.
+
+LICENCE
+- Archie DAW is free software under the GNU General Public License, version 3. You may use, study, change and share it under that licence, with no warranty. The licence and notices are installed in the program's licenses folder, and its source code is at https://github.com/grahamlee99/archie-daw for everyone who receives the program.
+- ASIO is a trademark and software of Steinberg Media Technologies GmbH.
+
+WHAT IT LOOKS AT
+- It scans two places for plug-ins: the folder where the Ask Archie Local Builder puts the plug-ins it builds, and your standard VST3 folder. It loads a plug-in only when you add it to a track.
+- A badly behaved plug-in can crash the program while it is being scanned or loaded. The program remembers the file it was scanning and skips it next time.
+
+SOUND IT CAN RECORD
+- It can record the sound-card input (a microphone or line in), but only when you arm a track, choose Sound-card input as that track's source, and press record. Nothing is recorded otherwise. A recording is saved as a sound file on your own computer (in the program's settings folder, under recordings) and placed on the track; it is not uploaded.
+
+WHAT GOES OVER THE INTERNET
+- Only the pages from askarchie.net that the program shows, the same as in your browser. Your plug-ins, your sound and your projects are not uploaded. Any other web address opens in your own browser, never inside this program.
+
+WHERE IT GOES
+- Only into your own user folder (no administrator rights needed). Uninstall removes it from the Windows Settings apps list or the Start menu. Its saved settings (the plug-in list and the sign-in to askarchie.net) are kept unless you tick the box to delete them. Your project files are in your own Documents and are never touched.
+
+WHAT YOU NEED
+- Windows 10 or 11, 64-bit, and the Microsoft Edge WebView2 runtime (most computers already have it; the setup tells you if not). A Mac version has not been tested yet.
+
+THE ONE THING WINDOWS MAY SAY
+- This setup file is not code-signed yet. A signing certificate comes later. So Windows may show "Windows protected your PC". That is expected: choose "More info", then "Run anyway". The publisher is Ask Archie (askarchie.net), and askarchie.net shows this file's SHA-256 so you can check you have the right one.

@@ -1,0 +1,1220 @@
+{
+  "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
+  "releases": [
+    {
+      "version": "0.1.145",
+      "date": "2026-11-26",
+      "title": "ASIO audio drivers",
+      "notes": [
+        "New: your sound card's ASIO driver can be chosen in the audio settings, under the audio device type. ASIO usually gives the shortest delay between playing and hearing.",
+        "Archie DAW is now free software under the GNU General Public License, version 3. The licence and notices are in the program's licenses folder.",
+        "ASIO is a trademark and software of Steinberg Media Technologies GmbH."
+      ]
+    },
+    {
+      "version": "0.1.144",
+      "date": "2026-11-26",
+      "title": "Sampler V2 no longer upsets other plug-ins",
+      "notes": [
+        "Fixed: if Archie Sampler V2 was the first Archie plug-in you opened, removing the Acid 303 or Warm Echo later, or closing the program, could crash it. You can now open them in any order.",
+        "The cause was that Archie plug-ins built so far share one window type between them. The program now looks after it, so no plug-in handles another's window."
+      ]
+    },
+    {
+      "version": "0.1.143",
+      "date": "2026-11-26",
+      "title": "Fewer crashes when removing plug-ins or closing",
+      "notes": [
+        "Fixed: removing a plug-in, or closing the program, could crash it when the plug-in's code was unloaded while something still used it. A plug-in's code now stays loaded until you close the program.",
+        "Still being worked on: if Archie Sampler V2 is the first Archie plug-in you open in a session, removing another Archie plug-in later can still crash. Opening another one first avoids it. Save often."
+      ]
+    },
+    {
+      "version": "0.1.142",
+      "date": "2026-11-26",
+      "title": "Archie Sampler V2 comes with the program",
+      "notes": [
+        "New: Archie Sampler V2 is installed with Archie DAW, beside Archie Drums, Archie Acid 303 and Warm Echo. You do not need to install it separately.",
+        "To lock a sample to the song tempo, set its Original BPM (Analyse Tempo, or type it) and switch Lock To Tempo on."
+      ]
+    },
+    {
+      "version": "0.1.141",
+      "date": "2026-11-26",
+      "title": "Three hot cues with pads",
+      "notes": [
+        "New: pads 1, 2 and 3 on the top bar. Cue 1 is your usual loop. Click an empty pad to make cue 2 or 3 at the bar you are in, the same length as the playing loop.",
+        "Press a filled pad to jump to that loop. It repeats until you press another. The Jump on boxes choose when: at once, 1/16, Beat, Bar or Loop end. A waiting pad flashes.",
+        "The playing cue is the loop on the ruler. The others show as thin numbered coloured strips you can drag or resize. Shift and click removes cue 2 or 3.",
+        "Keys: Alt with 1, 2 or 3, or the number pad. The plain number keys still pick tools.",
+        "Controller: right-click a pad, choose Learn a Controller Pad, then press a pad or button on your controller. It is remembered on this computer. Cues are saved with the song.",
+        "Fixed: in the mixer, a channel with no insert effect now sits level with the others."
+      ]
+    },
+    {
+      "version": "0.1.140",
+      "date": "2026-11-26",
+      "title": "Grab the whole loop and move it",
+      "notes": [
+        "New: drag the middle of the loop on the ruler to move it, keeping its length. It follows your snap setting, and Shift moves it freely. The cursor shows a hand over the loop.",
+        "Ctrl + drag inside the loop draws a new loop there instead. A click without a drag still moves the playhead, and the handles still resize.",
+        "Dragging past the edge scrolls the view. With a Hot cue box ticked, moving the loop while the song plays queues the jump for when you let go."
+      ]
+    },
+    {
+      "version": "0.1.139",
+      "date": "2026-11-26",
+      "title": "Hot cue: move the loop and jump on the beat",
+      "notes": [
+        "New: Hot cue tick boxes on the bar above the timeline, beside Import audio: 1/16, Beat, Bar and Loop end. With one ticked, moving the loop while the song plays does not take effect at once.",
+        "The song plays on to the ticked point, the next 16th note, the next beat, the end of the bar or the end of the playing loop, and then jumps to the start of the new loop. It never waits past the end of the playing loop.",
+        "With nothing ticked, the loop moves at once, as before. Switching the loop on or off, or moving it while stopped, is always immediate.",
+        "While it waits, the new loop shows faded with a dashed edge. Notes still sounding at the jump are ended so nothing hangs. The choice is saved with the song."
+      ]
+    },
+    {
+      "version": "0.1.138",
+      "date": "2026-11-26",
+      "title": "The track view scrolls while you drag the loop",
+      "notes": [
+        "New: drag a loop handle, or draw a new loop on the ruler, towards the right edge and the track view scrolls by itself, adding bars to the song as it reaches the end. The further past the edge you hold the pointer, the faster it goes.",
+        "Dragging towards the left edge scrolls back. The room made for the loop stays, so you no longer need to zoom or use the scroll bar to make a longer song."
+      ]
+    },
+    {
+      "version": "0.1.137",
+      "date": "2026-11-26",
+      "title": "Box-select clips with the left mouse button",
+      "notes": [
+        "New: with the Select tool, drag from empty track space with the left button to draw a box round clips, as you would select files on the desktop. Shift or Ctrl adds to what is already selected.",
+        "Dragging a clip still moves it, and dragging a selected clip moves the whole selection. Delete, Copy, Paste and Duplicate work on all the selected clips.",
+        "The right button still draws a box from anywhere, and Ctrl with a right drag still takes a copy.",
+        "Changed: the long help pop-up that appeared over the track area while you worked has been removed. Clips still show their own short tip when you point at them."
+      ]
+    },
+    {
+      "version": "0.1.136",
+      "date": "2026-11-26",
+      "title": "Sends start off, and a new send effect is silent until you turn it up",
+      "notes": [
+        "Changed: every send now starts with its level off, on new tracks and new songs.",
+        "Changed: putting an effect on an empty FX return, or moving one onto it, sets that send's level to off on every track. Nothing is heard from the effect until you turn a send up. The ON switches stay as they were.",
+        "A song you open shows a send as off when its return is empty and the send was never set. A level you set yourself is kept.",
+        "Double-clicking a send slider now returns it to off."
+      ]
+    },
+    {
+      "version": "0.1.135",
+      "date": "2026-11-26",
+      "title": "Collapse automation lanes",
+      "notes": [
+        "New: each automation lane can be collapsed to a thin strip that still shows its line. Use the small triangle on the lane, or double-click its name. Click a collapsed lane to open it.",
+        "New: right-click a lane name to collapse or open all lanes on that track, collapse or open every automation lane, or hide a track's lanes. The View menu has Collapse All and Open All too.",
+        "New: the Master Section row has a LANES button that shows or hides the master automation lanes.",
+        "Which lanes are collapsed is remembered on this computer."
+      ]
+    },
+    {
+      "version": "0.1.134",
+      "date": "2026-11-26",
+      "title": "Record EQ moves, draw lanes with the pencil, and no more clips on automation rows",
+      "notes": [
+        "Fixed: using the pencil on an automation lane added clips on top of the first track and drew nothing in the lane. The timeline tools now leave automation rows alone. Clips added that way are ordinary clips: press Undo, or select them and delete them.",
+        "New: with the pencil tool, drag along a lane to draw its line freehand. Hold Shift for finer steps.",
+        "New: press record and play, then move an EQ dot, a filter or an EQ number: what you move is written into its own lane. Dragging a dot writes frequency and gain together. No track needs to be armed.",
+        "New: the Archie sound knobs and switches record into the master lanes the same way.",
+        "While you are moving a setting its lane leaves it alone. A lane that is created this way opens by itself under the track or the Master Section row."
+      ]
+    },
+    {
+      "version": "0.1.133",
+      "date": "2026-11-26",
+      "title": "Automate the EQ for sweeps, and a fix for saved automation",
+      "notes": [
+        "New: every EQ setting on a track or the master can be automated. In the EQ window, right-click a dot, a filter square, a number or an ON button and choose what to automate, for example band 1 frequency and gain together. In the Mixer, right-click the LPF or HPF controls.",
+        "The lanes open under the track, or under the Master Section row, in the main window. Frequency and Q lanes are logarithmic, so a straight line is an even, musical sweep. The sound follows the lane block by block.",
+        "Fixed: opening a saved song turned send level, pattern, mute, solo and Archie sound lanes into input gain lanes. They now open as themselves.",
+        "A song that was already saved after that happened is put right when you open it, using the name each lane kept.",
+        "New: double-click any slider to put it back to its starting value: levels, pans and sends in the Track Panel and Strips, the track and master volume sliders, and the zoom, quantise, sensitivity and swing sliders. The knobs already did this."
+      ]
+    },
+    {
+      "version": "0.1.132",
+      "date": "2026-11-26",
+      "title": "Colour in the EQ spectrum: levels, resonances, the loudest point and clipping",
+      "notes": [
+        "New: the spectrum is coloured by how loud each part really is: green, turning amber from about minus 18 dB and red from about minus 9 dB.",
+        "New: a frequency that sticks out well above its neighbours lights up amber or red with a small marker, to help find ringing or boomy spots. Use your ears: a strong bass note sticks out too.",
+        "New: the loudest point is marked with its frequency, note and level.",
+        "New: the frame of the spectrum turns red for two seconds when the channel reaches full scale after its fader.",
+        "A Colours switch turns the colours and marks off, and is remembered. The clip warning stays on either way."
+      ]
+    },
+    {
+      "version": "0.1.131",
+      "date": "2026-11-26",
+      "title": "A smoother, sharper spectrum in the EQ window",
+      "notes": [
+        "Changed: the EQ spectrum is analysed over a longer window with 256 points, and the bass is blended between the analysis steps, so the flat shelves at the low end are gone.",
+        "Changed: it is drawn as a smooth curve with a soft fill and a bright top edge, at the true pixel size of your window. It rises quickly and falls slowly, so it moves without flickering.",
+        "New: a Peak hold switch draws a thin line at the loudest recent level.",
+        "New: a Tilt switch tilts the picture by 4.5 dB per octave, so a balanced mix looks roughly level and the top end is easier to see. It changes only the picture, never the sound. All three switches are remembered."
+      ]
+    },
+    {
+      "version": "0.1.130",
+      "date": "2026-11-25",
+      "title": "A 20 Hz cut button, automation on the master, and a steadier loudness target",
+      "notes": [
+        "New: the Archie sound has a 20 Hz CUT button. It is a steep cutoff (24 dB per octave) at the bottom of the audible range, so sub-bass you cannot hear does not take headroom from the limiter or feed the drive. It is on by default and you can switch it off.",
+        "New: the master can be automated. Right-click ON, 20 Hz CUT, PUSH, DRIVE, CEILING, BASS or TONE and choose Automate. The lane opens right under the Master Section row in the track view, and it is drawn and saved like any other lane.",
+        "Changed: a loudness target now moves PUSH by itself only up to +12 dB, and holds still once the mix has been on target for 3 seconds. It follows again only if the mix drifts more than 2 dB away. The knob says PUSH AUTO while a target is on, and a line under the target list says what it is doing, including when the target cannot be reached.",
+        "While a loudness target is on, a push lane waits, because the target is moving the push. Pick No target to take push back by hand."
+      ]
+    },
+    {
+      "version": "0.1.129",
+      "date": "2026-11-25",
+      "title": "Archie sound presets, a loudness target and LUFS readouts",
+      "notes": [
+        "New: the Archie sound has a preset list: Clean, Warm, Push the system, Drive, Extra bass, Radio, and targets for Streaming (minus 14 LUFS), Apple Music (minus 16) and Club or loud (minus 9). Change any knob and it shows Custom.",
+        "New: PUSH is more level into the drive and the limiter, the loud-max control. BASS is a low shelf at 90 Hz and TONE a high shelf at 6 kHz, both before the drive so it works on them too.",
+        "New: pick a loudness target and PUSH follows it by itself, slowly and only upward, until the finished mix reads that loudness. A mix already louder than the target is left alone.",
+        "New: the readout shows LUFS (the last 3 seconds) and INT (the whole song so far, with the standard gates) as streaming services measure them. Click INT to start it again.",
+        "The settings are saved with the song and Archie can change them, including the target."
+      ]
+    },
+    {
+      "version": "0.1.128",
+      "date": "2026-11-25",
+      "title": "The Archie sound: drive, a limiter, and a loudness readout on the master",
+      "notes": [
+        "New: the master has an Archie sound section at its end. DRIVE adds warmth and a little harmonic and rounds the peaks of drums and bass. It runs at twice the sample rate so it does not alias.",
+        "New: a look-ahead limiter follows the drive and holds the output at or under a CEILING you set (minus 1 dB to start). Push the master fader, a track or the drive and the mix gets denser but never goes over.",
+        "New: PEAK and AVG readouts show the loudest peak of the mix and its average level, and a bar shows what the limiter is doing. The gap between them is your dynamics.",
+        "A new song and the starter song start with the Archie sound on, a little drive and the ceiling at minus 1 dB. A song saved before this loads with it off, so it sounds as it did.",
+        "The master fader is the input to the Archie sound, so you can push the mix into it the way you would push a hot channel on a console. Archie can change all three settings."
+      ]
+    },
+    {
+      "version": "0.1.127",
+      "date": "2026-11-25",
+      "title": "Archie Drums starts 12 dB quieter",
+      "notes": [
+        "Changed: a new Archie Drums now starts with its Master level at -12 dB. At 0 dB a busy pattern peaked about 10 dB over full scale, so the track fader had to be pulled well down. Songs you have already saved keep the level they were saved with."
+      ]
+    },
+    {
+      "version": "0.1.126",
+      "date": "2026-11-25",
+      "title": "Fixes the empty EQ display",
+      "notes": [
+        "Fixed: the EQ window showed its title but no curve, dots or channel list, because its code was placed outside the part of the console it depends on. It is now inside, so the curve, the spectrum and the controls draw."
+      ]
+    },
+    {
+      "version": "0.1.125",
+      "date": "2026-11-25",
+      "title": "Fixes the blank EQ window",
+      "notes": [
+        "Fixed: the EQ window opened empty. Its page was placed inside the part of the console that is hidden in that window. It now sits at the top level and shows."
+      ]
+    },
+    {
+      "version": "0.1.124",
+      "date": "2026-11-25",
+      "title": "A four-band EQ with a live spectrum on every channel and the master",
+      "notes": [
+        "New: every track and the master have a parametric EQ behind the high-pass and low-pass filters. It has a low shelf, two bells and a high shelf, each with an on switch, frequency, gain (up to 18 dB either way) and Q.",
+        "A band that is off, or at 0 dB, changes nothing.",
+        "New: the EQ opens in a window of its own. Use the EQ button in a Rack header, OPEN EQ in a Mixer channel, or MASTER EQ in the master strip.",
+        "The window shows the EQ curve over a live spectrum of the sound after the EQ. Drag a dot to set frequency and gain, turn the mouse wheel on a dot for Q, and double-click a dot to switch the band on or off.",
+        "You can pick any other channel, or the master, from the list in the window.",
+        "The EQ settings are saved with the song and Archie can change them. The master EQ comes before the master compressor."
+      ]
+    },
+    {
+      "version": "0.1.123",
+      "date": "2026-11-25",
+      "title": "Square MUTE and SOLO buttons, and mute and solo automation",
+      "notes": [
+        "Changed: the MUTE and SOLO buttons in the Rack headers are now square, labelled in full, and light amber for mute and green for solo, so you can see at a glance what is on. Their tips say what they do.",
+        "New: right-click MUTE or SOLO anywhere (Rack, Mixer, Strips) and choose Automate. A Mute lane silences the track along the song and a Solo lane solos it. Draw a point at 1 for muted (or soloed) and 0 for not.",
+        "A mute or solo lane is drawn by hand. Moving the button while recording does not write it yet."
+      ]
+    },
+    {
+      "version": "0.1.122",
+      "date": "2026-11-25",
+      "title": "Fixes the Rack in 0.1.121",
+      "notes": [
+        "Fixed: version 0.1.121 had a typing fault in its page that stopped the console from working. Use this version instead. It carries everything 0.1.121 announced: IN and OUT meters on every device in the Rack and a level meter on every channel header."
+      ]
+    },
+    {
+      "version": "0.1.121",
+      "date": "2026-11-25",
+      "title": "Level meters on every device and channel in the Rack",
+      "notes": [
+        "New: every device in the Rack now shows the level going into it and coming out of it (IN and OUT). An instrument has no input, so it shows OUT only. A bypassed device shows nothing.",
+        "New: every track and send effect header in the Rack has a left and right level meter, with the same peak line and red CLIP light as the Mixer."
+      ]
+    },
+    {
+      "version": "0.1.120",
+      "date": "2026-11-25",
+      "title": "Step pattern: Off, Loop or One shot, and transpose",
+      "notes": [
+        "New: the Step pattern panel has a Pattern plays switch for the selected track. Off keeps the clips but silences them, Loop repeats the pattern for as long as the clip lasts, and One shot plays it once from the start of the clip and then stops, so a track never gets stuck in a loop.",
+        "New: a Transpose control moves the whole step pattern up or down in whole semitones, with buttons for 1 and 12 steps. Notes that are still sounding when it moves end on the pitch they started on.",
+        "New: right-click either control to automate it. A transpose lane that climbs makes a riser, and one that jumps in steps makes a fill. A play lane switches the pattern on and off along the song.",
+        "Both settings are saved with the song and are available to Archie."
+      ]
+    },
+    {
+      "version": "0.1.119",
+      "date": "2026-11-25",
+      "title": "Warm Echo and a starter song come with the program",
+      "notes": [
+        "New: the installer now carries Warm Echo as well as Archie Drums and Archie Acid 303. They show up in the plug-in list after the first scan.",
+        "New: File > New from Template now lists a starter song with an acid bass, drums and the send effects already set up. It opens as a new, untitled song.",
+        "Fixed: a song saved on another computer could not find its plug-ins, because their files were in different folders. They are now found again by name and maker."
+      ]
+    },
+    {
+      "version": "0.1.118",
+      "date": "2026-11-25",
+      "title": "Output meters stay together in the top bar",
+      "notes": [
+        "Fixed: the right output meter in the top bar dropped to a line of its own. The two meters now sit together, left above right, beside the Monitor rotary."
+      ]
+    },
+    {
+      "version": "0.1.117",
+      "date": "2026-11-25",
+      "title": "One master, a Monitor rotary, and a clearer CLIP light",
+      "notes": [
+        "Changed: the second Master slider in the top bar is gone. The song has one master, the vertical fader in the Mixer. In its place the top bar has a Monitor rotary, the control room level: how loud your sound card plays, never changing a bounce or an export.",
+        "Changed: when a channel reaches full scale, the number under its fader now says CLIP in red as well as the red outline on its meter. Click a meter to clear the light.",
+        "Fixed: clicking a meter to clear its CLIP light also stripped the styling from the clips on the timeline until the next redraw."
+      ]
+    },
+    {
+      "version": "0.1.116",
+      "date": "2026-11-25",
+      "title": "Select several clips with the right mouse button",
+      "notes": [
+        "New: drag with the right mouse button to draw a box round clips on the timeline. Everything the box touches is selected. Hold Shift to add to what is already selected, and click empty space to let go.",
+        "New: with several clips selected, drag one to move them all together, press Delete, Copy, Paste or Duplicate, or right-click one for a menu like the one for a single clip (Cut, Copy, Delete, Duplicate, Select All Clips, Mute, Split and Clip Color). Ctrl+A selects every clip.",
+        "New: hold Ctrl and right-drag a clip (or the whole selection) to take a copy. A ghost follows the pointer and the copy is made where you let go. Esc cancels, and Shift makes a shared copy.",
+        "A right-click that does not move is still the normal menu."
+      ]
+    },
+    {
+      "version": "0.1.115",
+      "date": "2026-11-25",
+      "title": "Archie Acid 303 comes with the program",
+      "notes": [
+        "New: the installer now carries Archie Acid 303 beside Archie Drums, with its sixteen patterns A1 to D4. It shows up in the plug-in list after the first scan, with nothing to download.",
+        "Changed: if you already installed the 303 from the Vault, you will see two copies in the list. Keep either one and remove the other."
+      ]
+    },
+    {
+      "version": "0.1.114",
+      "date": "2026-11-25",
+      "title": "Archie Acid 303 shows all sixteen patterns on its blocks",
+      "notes": [
+        "Fixed: the pattern menu on a 303 block stopped at B4 and a block set to a later pattern landed on the wrong one, because the 303 does not state how many patterns it has. The DAW now reads it from the control itself, so all of A1 to D4 are listed and each block plays the pattern it names."
+      ]
+    },
+    {
+      "version": "0.1.113",
+      "date": "2026-11-25",
+      "title": "Pattern blocks now work with Archie Acid 303",
+      "notes": [
+        "Fixed: pattern blocks did not reach Archie Acid 303, which keeps its sixteen patterns in one control called Active Bank. A block now sets it, so A1 to D4 all work, and a new 303 track starts with an A1 block.",
+        "Fixed: a pattern you pick on the 303 panel while a block plays is written into that block."
+      ]
+    },
+    {
+      "version": "0.1.112",
+      "date": "2026-11-25",
+      "title": "Pattern blocks now work with the real Archie Drums",
+      "notes": [
+        "Fixed: pattern blocks did not reach the Archie Drums that comes with the program, because it keeps its pattern in two controls, Pattern (A to D) and Bank (1 to 4). A block now sets both, so A1 to D4 all work.",
+        "Fixed: a pattern you pick on the Archie Drums panel while a block plays is written into that block, as it already was for the other pattern plug-ins."
+      ]
+    },
+    {
+      "version": "0.1.111",
+      "date": "2026-11-25",
+      "title": "Pattern blocks: silence between blocks, block-relative start, A1 to D4",
+      "notes": [
+        "New: a track given Archie Drums or Archie Acid 303 starts with a pattern block, A1, four bars long. Nothing to set up.",
+        "Changed: between blocks (and after the last one) the plug-in plays nothing new, so half a block means half a bar of pattern and then silence. Hits already sounding finish naturally.",
+        "Changed: each block starts its pattern at its own first step, wherever you draw it.",
+        "Changed: patterns are named by bank letter and number such as A1 or B3 in block labels and the right-click Pattern menu. With the pencil tool, dragging on a pattern track draws a block of that length, snapped to the quantise setting.",
+        "New: choose a different pattern on the plug-in itself while a block plays, and the block follows it."
+      ]
+    },
+    {
+      "version": "0.1.110",
+      "date": "2026-11-25",
+      "title": "Pattern blocks for Archie Drums",
+      "notes": [
+        "New: right-click a track and choose Add Pattern Block Here. A pattern block has no notes. It says which of the plug-in's patterns (1 to 8) plays for as long as the block lasts.",
+        "New: double-click a block to step to the next pattern, or right-click it and choose Pattern to pick one. Blocks move, stretch, copy and mute like any clip, and they are saved with the song.",
+        "The pattern changes exactly at the block's edge. The plug-in's link to the bass pattern is switched off while a block plays, and the plug-in keeps its place in the bar."
+      ]
+    },
+    {
+      "version": "0.1.109",
+      "date": "2026-11-25",
+      "title": "Loop markers are easier to set",
+      "notes": [
+        "Changed: the loop handles on the ruler are wider, with a visible grip, so they are easy to grab.",
+        "Fixed: the loop band flashed back to its old place while you dragged it. It now follows the pointer, and stays where you drop it until the program reports the new loop."
+      ]
+    },
+    {
+      "version": "0.1.108",
+      "date": "2026-11-25",
+      "title": "Fixed: the first note after a loop sounded twice",
+      "notes": [
+        "Fixed: a plug-in that plays its own pattern (Archie Drums, Acid 303) played the first note after the loop wrap twice. The piece before the wrap was told it ran a sliver past the loop end. It now ends exactly on the loop end."
+      ]
+    },
+    {
+      "version": "0.1.107",
+      "date": "2026-11-25",
+      "title": "Note trace, to find a stray note",
+      "notes": [
+        "New: Help > Save Note Trace writes the last notes each track sent to its plug-in, with the beat each one was placed at, to Documents/Archie DAW note trace.txt. It is for finding a note that sounds when it should not."
+      ]
+    },
+    {
+      "version": "0.1.106",
+      "date": "2026-11-25",
+      "title": "Level meters: scale, peak hold and clip light",
+      "notes": [
+        "New: the vertical meters have tick marks at -6, -18, -30 and -45 dB, and the master meter has a numbered scale (0, -6, -18, -30, -45).",
+        "New: each meter keeps a thin peak marker for 1.5 seconds, then it falls.",
+        "New: a meter that reaches full scale (0 dB) lights red and stays lit until you click it."
+      ]
+    },
+    {
+      "version": "0.1.105",
+      "date": "2026-11-25",
+      "title": "Level meters show the right colours",
+      "notes": [
+        "Fixed: a level meter showed green, orange and red even for a quiet sound, because the colours were squeezed into the lit part. The colours now belong to the scale: green up to -18 dB, orange up to -6 dB, red above."
+      ]
+    },
+    {
+      "version": "0.1.104",
+      "date": "2026-11-25",
+      "title": "Send ON buttons are easier to see",
+      "notes": [
+        "Changed: each send's button now reads ON 1, ON 2 and so on, and the knob is dimmed while the send is off, so it is clear nothing is sent until you press ON."
+      ]
+    },
+    {
+      "version": "0.1.103",
+      "date": "2026-11-25",
+      "title": "Sends work like a console: ON per track, and a Master effects section",
+      "notes": [
+        "Changed: every send has a numbered ON button on each track. Nothing is sent to an effect unless that track's send is ON. The level is kept while it is off.",
+        "Changed: a send's level belongs to its track alone. Moving it never touches another track.",
+        "New: right-click a send knob to automate it, and moving it while recording writes the lane.",
+        "Changed: the Rack shows Master inserts first, then a Master effects section (the shared send effects), then the tracks with their insert effects chained below the instrument.",
+        "Older songs open with their sends ON at the level they had."
+      ]
+    },
+    {
+      "version": "0.1.102",
+      "date": "2026-11-25",
+      "title": "The mixer shows the send effect, like Reason",
+      "notes": [
+        "Changed: each FX return in the Mixer now shows its effect in a slot, with EDIT, M, AUTO, LEVEL and PAN beside it, as on Reason's mixer. An empty return says drop an effect here.",
+        "New: drag an effect from the Browser, or a device from a rack, onto a return's slot to put it there. Click an empty slot to choose an effect. Click a full slot to open the effect. Right-click it to add another, bypass or remove.",
+        "New: a channel's send number lights up when that send is on, and its tooltip names the effect it feeds.",
+        "A send is how much of a channel goes to the effect. The return's Level is how loud the effect comes back, and Pan is where it sits."
+      ]
+    },
+    {
+      "version": "0.1.101",
+      "date": "2026-11-25",
+      "title": "Racks say what they are; one click to make a send effect",
+      "notes": [
+        "New: every effect in a track or master rack has a Send button. It moves the effect onto a free FX return, so it is heard only when a track's send is turned up.",
+        "Clearer: each rack says what its effects are. Master inserts process the whole mix all the time. Track inserts take that track's sound straight through. An FX return is heard only through the sends.",
+        "Changed: the add chooser in each rack now reads add master insert, add insert or add send effect, to match."
+      ]
+    },
+    {
+      "version": "0.1.100",
+      "date": "2026-11-25",
+      "title": "Mixer inserts can be removed and reordered",
+      "notes": [
+        "Fixed: the x button on an insert in the Mixer did nothing, so an insert could not be removed there. It removes the insert now.",
+        "Fixed: the up and down arrows on a Mixer insert did nothing either. They move the insert earlier or later in the chain."
+      ]
+    },
+    {
+      "version": "0.1.99",
+      "date": "2026-11-25",
+      "title": "Send effects, like a console",
+      "notes": [
+        "New: an effect can be put on an FX return as a SEND effect. Every effect card in the Browser has a Send button, and the Master panel has a Returns list with + Send effect.",
+        "A send effect is not heard until a track's send for that return is turned up. PRE sends before the fader and POST after it. The track's send rows now show the effect's name.",
+        "Clearer: + Add puts an effect on the track itself as an INSERT, so the track's sound goes straight through it. The track's rack now says so.",
+        "Checked by the program's own tests: with a send off nothing reaches the effect, a POST send follows the fader, a PRE send does not, and the send level scales what the effect gets."
+      ]
+    },
+    {
+      "version": "0.1.98",
+      "date": "2026-11-25",
+      "title": "Live notes in the piano roll; a loop take is one undo",
+      "notes": [
+        "New: the piano roll shows the take in progress as translucent notes with a dashed edge, placed inside the clip you are editing, as they are played.",
+        "Changed: a whole recording take, however many passes of the loop it took, is now one undo step. One undo takes the whole take back, one redo brings it all again.",
+        "Also in this version (0.1.97): loop recording plays each pass back, ghost notes in the track lane, notes drawn inside clips, and Ctrl + wheel zoom by where the pointer is."
+      ]
+    },
+    {
+      "version": "0.1.97",
+      "date": "2026-11-25",
+      "title": "Loop recording plays back, notes in clips, taller tracks",
+      "notes": [
+        "Fixed: recording inside a loop. What you play in a pass now sounds on the next pass while recording carries on. Before, it stayed silent until you switched recording off.",
+        "New: the notes of the take in progress are shown as they go in, as marks in the track's lane. They become real notes when the loop returns to its start or when you stop.",
+        "New: a clip shows its notes inside it, as Reason does, scaled to the clip's own lowest and highest note.",
+        "New: tracks can be made taller or shorter with Ctrl + mouse wheel over the track names, or the Tracks buttons by the zoom. Over the clips, Ctrl + wheel still zooms the time scale. The height is remembered.",
+        "Changed: a take recorded in a loop becomes one clip that covers the loop, and a note held across the wrap ends at the end of the loop."
+      ]
+    },
+    {
+      "version": "0.1.96",
+      "date": "2026-11-24",
+      "title": "Bundled plug-ins are found on their own",
+      "notes": [
+        "New: the program looks in a Plug-ins folder next to itself, so instruments and effects that come in the installer are found by themselves the first time it opens, with no Scan button needed.",
+        "Changed: the first-run check that already brought in Archie Drums now covers that folder too.",
+        "Note: this version was tried with a test installer that carried nine plug-ins. The installer on the site stays the plain one until the plug-ins are chosen and presented."
+      ]
+    },
+    {
+      "version": "0.1.94",
+      "date": "2026-11-24",
+      "title": "Empty song: the + Track button is back",
+      "notes": [
+        "Fixed: in an empty song the + Track button was hidden by its own hint text. It sits in the row under the Master again, with a short hint beside it."
+      ]
+    },
+    {
+      "version": "0.1.93",
+      "date": "2026-11-24",
+      "title": "Track view like Reason: empty start, track colours, drag in",
+      "notes": [
+        "Changed: the program and a new song start with the Transport and the Master only. There are no ready-made tracks; you add them.",
+        "New: drag an instrument from the Browser onto the track view. On empty space it becomes a new track; on a track it goes onto that track. An effect goes onto the selected track.",
+        "New: every track gets its own colour when it is made, shown as a tint on its header. The track you are working on is bold: strong colour, a ring round its header and a lifted lane.",
+        "Changed: the last track can now be removed too, and the + Track row says what to do when the song is empty."
+      ]
+    },
+    {
+      "version": "0.1.92",
+      "date": "2026-11-24",
+      "title": "Plug-in window: Remote and Screenshot",
+      "notes": [
+        "New: every plug-in window now has the usual strip at the top: Keep on top, Automate, Remote and Screenshot.",
+        "New: Remote assigns a knob or slider on your MIDI controller to a control in the plug-in. Press Remote, choose Assign, move a control in the plug-in, then move the knob on your controller.",
+        "From then on that knob moves that control, and records into its lane when the track is armed and recording. The controller message is used up, not also played.",
+        "Remote assignments are kept with the song, and the Remote menu can clear a track's assignments.",
+        "New: Screenshot saves a picture of the plug-in window into PicturesArchie DAW and shows it in Explorer."
+      ]
+    },
+    {
+      "version": "0.1.91",
+      "date": "2026-11-24",
+      "title": "Automation: a touched control keeps its last position",
+      "notes": [
+        "Fixed: recording a slow move no longer saws up and down. Once you move a control while recording, it keeps its last position as the song goes on (the lane holds that value forward) and the old line does not pull it back. There is no timer.",
+        "Changed: the old line takes over again only when the song stops or loops back to before where you first touched the control. A whole take is one undo step, closed when the song stops."
+      ]
+    },
+    {
+      "version": "0.1.90",
+      "date": "2026-11-24",
+      "title": "Automation records on the record target; recorder status in the log",
+      "notes": [
+        "Changed: automation is recorded on the same track that MIDI goes to when you record: the armed track, or the selected track when none is armed. Press the transport's record and play.",
+        "Changed: the Automation item in the top menu bar and in the Help list is gone, since automation lives only under the tracks.",
+        "New: while recording on a playing song, the log says what the recorder sees: how many controls it watches, how many moves it has seen and how many points it has written. It is there to show where a take stops if a lane stays empty."
+      ]
+    },
+    {
+      "version": "0.1.88",
+      "date": "2026-11-24",
+      "title": "Automation recording finds hand moves by itself",
+      "notes": [
+        "Fixed: moving a control in a plug-in with the track armed and the transport recording now draws into its lane even when the plug-in never tells the host that you grabbed it. The armed track's plug-in controls are watched while the song plays; a change that no lane made is taken as your hand.",
+        "Fixed: lane rows no longer show the clip tooltip."
+      ]
+    },
+    {
+      "version": "0.1.87",
+      "date": "2026-11-24",
+      "title": "One place for automation: under the track",
+      "notes": [
+        "Changed: the separate Automation panel in the Edit Area is gone. Automation is drawn and edited only in the lanes under each track (the wave button on the track header), as in Reason.",
+        "Changed: the extra + Lane and Learn buttons under the tracks are gone. Lanes are made by right-click Automate on a control, by Automate in a plug-in window, or by recording: arm the track (R), switch on the transport record, play, and move a control."
+      ]
+    },
+    {
+      "version": "0.1.86",
+      "date": "2026-11-24",
+      "title": "Automation only in the track view",
+      "notes": [
+        "Changed: the Edit Area no longer opens on an Automation panel under the tracks. Automation is drawn and edited only in the lanes under each track, as in Reason."
+      ]
+    },
+    {
+      "version": "0.1.85",
+      "date": "2026-11-24",
+      "title": "Automation: arm and record, lanes under the track",
+      "notes": [
+        "Changed: automation is recorded when the track is armed (R) and the transport record is on, as in Reason. There is no separate automation Record switch.",
+        "Changed: the Automation tab in the Edit Area is hidden. Lanes live right under their track: Automate (right-click a control, or Automate in a plug-in window) opens them there, and each track's row has + Lane and Learn."
+      ]
+    },
+    {
+      "version": "0.1.84",
+      "date": "2026-11-24",
+      "title": "Automation recording follows the track arm",
+      "notes": [
+        "Changed: automation is now recorded the way notes are. Arm the track (R), press record, play, and move a control: there is no separate Record switch for automation any more.",
+        "Fixed: a control you move by hand is now drawn into its lane continuously while you hold it, not just its last position. The control is also sampled many times a second, so plug-in screens that report only some of their moves still give a smooth line.",
+        "Changed: when Learn, Record or the Automate menu makes a lane, the track opens its lanes right under it in the timeline, as in Reason.",
+        "Fixed: the first point of a take no longer wipes the older line before it."
+      ]
+    },
+    {
+      "version": "0.1.83",
+      "date": "2026-11-24",
+      "title": "Record automation",
+      "notes": [
+        "New: Record automation. Press Record in the Automation tab (or Rec in the + Lane row under a track), start the song, and move a Level, Pan or Input gain control: your move is written into that control's lane at the song's position, and the lane is made for you if the track has none.",
+        "It works on the controls in a plug-in's own window too. Grab a control while the song plays and the move is recorded into the lane for that parameter. For this the plug-in has to tell the host when a control is grabbed and let go, which most plug-ins do. A plug-in that moves its own values, or a lane playing back, is never recorded.",
+        "While you hold a control its lane does not pull it back. A moment after you let go the lane takes over again. The part of the old line your move passes over is replaced, slow moves are thinned so they do not write thousands of points, and one take is one undo step.",
+        "Record automation is off when you start the program and does nothing while the song is stopped."
+      ]
+    },
+    {
+      "version": "0.1.82",
+      "date": "2026-11-24",
+      "title": "Automation lanes under the track",
+      "notes": [
+        "Automation now shows right under its track in the timeline, on the same time scale as the clips. Each track header has a new automation button (the little wave): press it and that track's lanes open beneath it.",
+        "Each lane has its name, an M button to switch it off and on (an off lane stops moving its control but is kept) and an X to remove it. Click in a lane to add a point, drag a point to move it, right-click a point to delete it. The curve is on the song's own time scale, so you can line it up with the clips.",
+        "The + Lane button under the lanes adds a Level, Pan or Input gain lane, or starts Learn so the next control you move in a plug-in gets a lane.",
+        "The Automation tab in the Edit Area is still there for the full-size editor, and the two always show the same lanes."
+      ]
+    },
+    {
+      "version": "0.1.81",
+      "date": "2026-11-24",
+      "title": "Automation: lanes show, and Learn",
+      "notes": [
+        "Fixed: the Automation tab drew no lanes at all. Since 0.1.63 the Audio Edit screen had taken the name of the Automation tab's drawing code, so adding a lane worked but nothing appeared. Lanes now show and can be edited again.",
+        "Right-click Automate now works on the Track Panel's Level and Pan, on a track header's volume and in the Mixer. It makes the lane, opens the Automation tab on that track and shows it. The Create menu's Add Automation Lane and View, Automation open the tab too.",
+        "New: Learn. Press Learn in the Automation tab, or the new Automate button at the top of any plug-in's own window, then move a control in the plug-in. That parameter gets its lane, with no hunting through a list. It works on third-party plug-ins too, as long as the plug-in tells the host when a control moves. Parameters that move by themselves are ignored, and it stops by itself after 20 seconds.",
+        "Plug-in windows now have a slim toolbar with Keep on top and Automate."
+      ]
+    },
+    {
+      "version": "0.1.80",
+      "date": "2026-11-24",
+      "title": "First note after a loop no longer cut off",
+      "notes": [
+        "Fixed: with a loop on, the first note after the loop restarted could be cut off. This showed on a self-sequencing instrument such as Archie Acid 303, whose step 1 would sometimes sound choked.",
+        "Cause: a block of sound that crossed the loop end was handed to plug-ins as one block with only its starting position. A plug-in that follows the host's position carried on past the loop end, then saw the next block jump back by the whole loop and shut its sounding note, which was the note that had just started.",
+        "Now a block that crosses the loop end is processed in two pieces, each told its true position, as other DAWs do. Nothing changes for blocks that do not cross the loop end."
+      ]
+    },
+    {
+      "version": "0.1.79",
+      "date": "2026-11-24",
+      "title": "Panic now stops a hung note",
+      "notes": [
+        "Fixed: a note that hung on the Archie Mini Synth could not be stopped, even with the Panic button. That synth ignores the all-notes-off and reset messages Panic used to send.",
+        "Panic now also sends a plain note-off for every note on every channel to every track, which every instrument understands. A note that was holding now lets go, and the next note you play sounds as normal. Panic still does not stop the transport or change your song."
+      ]
+    },
+    {
+      "version": "0.1.78",
+      "date": "2026-11-23",
+      "title": "Easier to read Mixer",
+      "notes": [
+        "The Mixer text is bigger and clearer. Knob labels and readouts are larger and use the brighter label colour, and the section bars, buttons, send rows, insert names and faders are one size up.",
+        "Knobs are a little larger and the strips a little wider. At a small window size you now see about two and a half strips beside the master column."
+      ]
+    },
+    {
+      "version": "0.1.77",
+      "date": "2026-11-23",
+      "title": "Folders removed for good",
+      "notes": [
+        "The unused folder code has been taken out of the program. Folders left the screens in an earlier version; now the sound engine no longer carries them either, so every track goes straight to the master mix.",
+        "A song saved by an older version that had folders still opens. The program tells you how many it had, and its tracks play straight into the master, so the folder's own volume, mute and effects no longer apply.",
+        "Nothing changes for a song that never used folders: delay compensation, sends, solo and mute all sound as before."
+      ]
+    },
+    {
+      "version": "0.1.76",
+      "date": "2026-11-23",
+      "title": "Audio Transpose",
+      "notes": [
+        "Audio Edit now has a working Transpose. Type a number of semitones (hundredths are cents) or use the -12, -1, +1, +12 and 0 buttons, and the selected sound clip plays higher or lower. The clip keeps its length and its timing.",
+        "Keep voice colour is on by default, so a voice does not turn into a chipmunk or a giant as the pitch moves. Switch it off for a bare tone or an instrument if the level drops.",
+        "Transpose works on a clip that follows the tempo and on one that does not, it is saved with the song, and undo brings back the earlier setting. The new sound is made in the background, and the clip says so while it works. Until it is ready the clip plays as it was.",
+        "Vocal Edit and Comp Edit are still not built."
+      ]
+    },
+    {
+      "version": "0.1.75",
+      "date": "2026-11-23",
+      "title": "Grooves",
+      "notes": [
+        "The Groove dock now has real groove channels. Channels A2 to D8 each play a groove patch through a strength slider, with Slide and Shuffle knobs. Switch a channel on, choose a patch, and the notes of every clip using it play a little earlier or later, louder or softer, longer or shorter. Strength 0 does nothing at all.",
+        "The panel on the right sets the timing, velocity and note length impacts, a random timing in ticks and an anchor step. Extract from the selected clip makes your own groove from how that clip is played. Delete removes one you made.",
+        "A track chooses its groove channel in the Track Panel, and a single clip can choose its own in its strip. Grooves change how notes play, never the clip itself, and they work together with the global swing in A1.",
+        "Pre-align and Global shuffle are shown but are not built yet."
+      ]
+    },
+    {
+      "version": "0.1.74",
+      "date": "2026-11-23",
+      "title": "Control room and Dim",
+      "notes": [
+        "The Master Section's Control room out now works. Its LEVEL knob sets the level of what the sound card plays, from off up to +6 dB, and DIM -20dB turns it down a further 20 dB. Dim is a button in the Mixer's Master Section and on the Hardware interface at the top of the Rack, and both show the same state.",
+        "They change only what goes to the sound card. A bounce or an export never hears the control room level or Dim, so a dimmed session still bounces at full level. At 0 dB, no Dim and the main outputs, the sound is exactly as it was, bit for bit, and moving them is smoothed so it never clicks.",
+        "A selector chooses where the control room comes out. Main outputs 1/2 shares the main pair with the master. If your sound card has more outputs you can choose a pair of its own (3/4, 5/6 and so on): outputs 1/2 then carry the master unchanged and the chosen pair carries the monitoring feed. A pair the card does not have falls back to the main outputs.",
+        "The settings are saved with the song and each change is one undo step. Archie can set them with the new controlRoom command (crDb, crDim and crPair). Only the master compressor's side-chain key is still marked not built in the Mixer."
+      ]
+    },
+    {
+      "version": "0.1.73",
+      "date": "2026-11-23",
+      "title": "Master compressor",
+      "notes": [
+        "The Master Section now has a working compressor that works on the whole mix. ON switches it on, and PEAK picks a peak detector (lit) or an RMS detector (dark), which suits a master better because it follows the loudness of the mix.",
+        "THRESHOLD runs from -40 to 0 dB (starting at -12), RATIO from 1.1:1 to 20:1 (starting at 2:1), ATTACK from 0.1 ms to 30 ms (starting at 10 ms), RELEASE from 50 ms to 1.2 s (starting at 300 ms) and MAKE-UP adds 0 to 24 dB. A bar shows how far the whole mix is being turned down.",
+        "It runs after the master inserts and before the master fader, so the compression does not depend on the master level. Off, the mix is exactly as it was, bit for bit, and switching it on or off never clicks. It is saved with the song, each change is one undo step, and Archie can set it with the new masterComp command.",
+        "The side-chain key (a track that triggers the compressor) is marked not built. The control room output and Dim are the last parts of the Mixer still marked not built."
+      ]
+    },
+    {
+      "version": "0.1.72",
+      "date": "2026-11-23",
+      "title": "Channel width",
+      "notes": [
+        "The Width knob in each Mixer channel now works. It sets the stereo width of the channel's sound from 0% (mono: left and right the same) through 100% (as it is) to 200% (twice as wide). Double-click it to go back to 100%.",
+        "It works on the difference between left and right and leaves the middle alone, so a mono sound never changes whatever the setting, and a sound that is the same in both sides keeps its level. At 100% the channel is exactly as it was, bit for bit, and moving the knob is smoothed over about 20 ms so it never clicks.",
+        "Width sits after the channel's effects and before its pan, so it also shapes what the sends and the pan see. It is saved with the song, each change is one undo step, and Archie can set it with the track command (width, 0 to 2). Width cannot be automated yet.",
+        "Only the master compressor and the control room output (with Dim) are still marked not built in the Mixer."
+      ]
+    },
+    {
+      "version": "0.1.71",
+      "date": "2026-11-23",
+      "title": "Channel gate",
+      "notes": [
+        "Each Mixer channel now has a working gate, under its compressor. GATE switches it on. When the sound falls below THRES (threshold) it waits for HOLD, then shuts over REL (release) to RANGE dB lower, and it opens again quickly when the sound comes back. A small amount of hysteresis stops it chattering.",
+        "EXP turns the gate into a gentle 2:1 expander: each dB below the threshold turns the sound down one more dB, never further than RANGE, which is smoother for things like drums with spill. FAST makes the opening faster (0.05 ms instead of 0.5 ms).",
+        "THRES runs from -80 to 0 dB, RANGE from 0 to 80 dB, REL from 50 ms to 4 s and HOLD from 0 to 2 s. A bar under the knobs shows how far the gate is turning the sound down. Both channels are linked.",
+        "The gate runs after the compressor and before the EQ. Off, the channel is exactly as it was, bit for bit, and switching it on or off never clicks. The settings are saved with the song, each change is one undo step, and Archie can set them with the track command (gateOn, gateExp, gateFast, gateThr, gateRange, gateRel and gateHold)."
+      ]
+    },
+    {
+      "version": "0.1.70",
+      "date": "2026-11-23",
+      "title": "Channel compressor",
+      "notes": [
+        "The Dynamics section of each Mixer channel now has a working compressor. COMP switches it on. PEAK picks a peak detector (lit) or an RMS detector (dark), which reads a steady sound about 3 dB lower. FAST picks a 0.5 ms attack (lit) or a 5 ms attack that lets the start of a hit through.",
+        "RATIO runs from 1.1:1 to 20:1, THRES from -40 to 0 dB, REL (release) from 50 ms to 1.2 s and MAKE-UP adds 0 to 24 dB after the reduction. A bar under the knobs shows how much the compressor is turning the sound down, up to 24 dB.",
+        "The two channels are linked, so the stereo picture does not shift. It runs after the Input stage and before the EQ. Off, the channel is exactly as it was, bit for bit, and switching it on or off is faded over 5 ms so it never clicks.",
+        "The settings are saved with the song and each change is one undo step. Archie and assistants can set them with the track command (compOn, compThr, compRatio, compRel, compFast, compPeak and compMakeup). The gate is still marked not built."
+      ]
+    },
+    {
+      "version": "0.1.69",
+      "date": "2026-11-23",
+      "title": "Channel EQ: high-pass and low-pass",
+      "notes": [
+        "The EQ section of each Mixer channel now works. It has a low-pass filter (LPF) and a high-pass filter (HPF), each with an ON switch and a frequency knob. The high-pass cuts the low frequencies below its setting (20 Hz to 2 kHz, starting at 80 Hz) and the low-pass cuts the high frequencies above its setting (1 kHz to 20 kHz, starting at 12 kHz). Each cuts 12 dB per octave.",
+        "Both start switched off, and with both off the channel is exactly as it was, bit for bit. Switching a filter on or off is faded over a few milliseconds so it never clicks. The filters sit right after the channel input stage, before the effects.",
+        "The settings are saved with the song and each change is one undo step. Archie and assistants can set them with the track command (eqHpOn, eqHpHz, eqLpOn and eqLpHz).",
+        "The filter frequencies cannot be automated yet. Dynamics, Width and the master compressor are still marked not built."
+      ]
+    },
+    {
+      "version": "0.1.68",
+      "date": "2026-11-23",
+      "title": "Channel input: gain and invert",
+      "notes": [
+        "The Input section of each Mixer channel now works. Its GAIN knob sets the channel's input gain from -24 to +24 dB (double-click for 0 dB), and INV flips the polarity of the channel's sound. They act where the sound enters the channel's effects: after the instrument, before the first effect.",
+        "At 0 dB and not inverted the channel is exactly as it was, bit for bit, so nothing changes for a song that does not use it. Moving the gain or inverting is smoothed over a few milliseconds, so it never clicks.",
+        "The settings are saved with the song, each is one undo step, and the input gain can be automated: right-click the knob and choose Automate, or add an input gain lane in the Automation tab (tracks only).",
+        "Archie and assistants can set them with the track command (inGainDb and inInvert). Dynamics, EQ, Width and the master compressor are still marked not built and arrive one at a time."
+      ]
+    },
+    {
+      "version": "0.1.67",
+      "date": "2026-11-23",
+      "title": "The Rack window",
+      "notes": [
+        "The Master Section now sits at the top of the rack as a Hardware interface device. It shows the sound card in use with its sample rate and buffer size, its input channels, its output latency and the whole-project delay, and it has live master meters and a Dim button (marked not built).",
+        "Show back (routing) now draws the back of the rack as cables: each channel to the master, each send to its FX return (a thicker cable is a louder send), each FX return to the master, and the master to the sound card. The routing is fixed, so it is a picture of the real connections, not something you patch. The details of each channel are still listed below it.",
+        "The popped-out Rack has the Browser as a column on its left, with the same compact device rows as the main window. The Browser button in the Tracks section hides it or brings it back, and it remembers which you chose."
+      ]
+    },
+    {
+      "version": "0.1.66",
+      "date": "2026-11-23",
+      "title": "The Mixer window",
+      "notes": [
+        "Each channel strip in the Mixer now has the full set of sections, top to bottom: Input, Dynamics and EQ, then the Inserts, the Sends, the Channel (pan, mute, solo, record and automation), Width, the fader with its meters, the Output and the name tab with SEQ and RACK.",
+        "Input, Dynamics, EQ and Width are drawn collapsed and marked not built, because the effects behind them do not exist yet. They are there so you can see where they will go, and each one switches on when its effect is built.",
+        "The Master Section now shows a Master compressor and a Control room out (both marked not built), the master inserts, the FX returns, a Delay comp readout with the real total delay the program adds to line the channels up, the master fader, a Dim button (marked not built) and MUTE ALL OFF and SOLO ALL OFF.",
+        "A popped-out Mixer (Pop out in the Tracks section) shows the same layout, and its transport is now one slim line like the main window's."
+      ]
+    },
+    {
+      "version": "0.1.65",
+      "date": "2026-11-23",
+      "title": "The Groove dock",
+      "notes": [
+        "The Groove link now opens a Groove tab in the Edit Area: four banks (A to D) of eight groove channels. Each channel has an ON switch, an EDIT button, a patch name, a strength slider, Slide and Shuffle knobs, and Pre-align and Global shuffle switches. The panel on the right edits the chosen channel.",
+        "Channel A1 is the Swing channel, and it works: its slider sets how much swing every note clip gets (0 is straight, 1 is a full triplet feel), its ON switch turns the swing on and off, and the panel on the right chooses whether every second eighth or every second sixteenth is delayed. It is the same swing as the Groove control in the tool bar, and the two always show the same setting.",
+        "The other channels, the Slide and Shuffle knobs, the timing, velocity and note length impacts, random timing, the anchor point and Global shuffle are drawn and marked not built yet. They need a groove engine that stores grooves and applies them to the notes, which comes in its own stage."
+      ]
+    },
+    {
+      "version": "0.1.64",
+      "date": "2026-11-23",
+      "title": "On-screen piano",
+      "notes": [
+        "The Keys link now opens an on-screen piano: a small window you can drag anywhere. It plays the selected track (and records onto it when the track is armed). A strip at the top shows which part of the keyboard the keys below cover; click it, or use the arrows or the Z and X buttons, to move up and down by an octave.",
+        "Mouse mode plays with the mouse. Computer keys mode plays with the computer keyboard: the home row (A to the apostrophe key) for the white keys and W E T Y U O P above it for the black keys, with the letters drawn on the keys, Z and X for the octave, and 1 to 0 to set the velocity. Keys held with Ctrl or Alt keep their usual shortcut meaning.",
+        "Velocity has a number box and a Variation setting (None, Low, Medium, High) that varies each note a little, so a repeated note does not sound machine-made. Repeat retriggers a held note, Hold keeps a note sounding after you let go until you press it again, and Sustain keeps the notes you release while it is pressed.",
+        "With the piano open, it decides what the keys do; closing it (or clicking away from the program) lets go of every note."
+      ]
+    },
+    {
+      "version": "0.1.63",
+      "date": "2026-11-23",
+      "title": "Audio Edit",
+      "notes": [
+        "A sound clip now has its own editor in the Edit Area: double-click it (or choose the Audio tab). The left side holds Recording (the sound's name, and Bounce to new recording), Stretch type, Tempo, Transpose, Sound and a Slice Edit button; the right side shows the sound's waveform with its bar lines, its hits (red marks) and its warp markers.",
+        "Drag a hit or a warp marker onto a beat in the waveform to pin that moment there (hold Shift for fine steps); double-click a marker to remove it. Tempo has Detect, and x2 and /2 to double or halve the tempo the sound was made at. Stretch type offers Allround (keeps the pitch) or Repitch, and the Warp button turns the stretch on and off.",
+        "Normalize clip sets the clip's gain so its loudest point reaches 0 dB. Reverse, gain and the fades are here too. Bounce to new recording plays the clip through its own track and writes the sound as a new recording on a new track.",
+        "Slice Edit shows the hits as slice lines and the slice tools: Cut at hits, Cut every, Hits to notes and Quantise. The sound, warp and chop rows have left the clip strip (the More button is gone). Transpose, Vocal Edit, Comp Edit and the other stretch types are listed and marked not built yet."
+      ]
+    },
+    {
+      "version": "0.1.62",
+      "date": "2026-11-23",
+      "title": "Key Edit",
+      "notes": [
+        "The piano roll in the Edit Area is now laid out as Key Edit: an inspector on the left and the keys, notes and velocity lane on the right. The keys now fill the Edit Area, and a clip's notes are shown in the middle when you open it.",
+        "The inspector shows the chosen note's Position (bar.beat.16th.tick, or a number of beats), Length, Note (a name such as D4) and Velocity. Type a new value, or use the little arrows, and every chosen note changes. Position moves them all together; the others set them all to the value.",
+        "Quantize has its own grid and a strength, with an ends-too tick. Randomize moves the chosen notes (or all of them) a random amount earlier or later, up to the range in ticks you set. Each change is one undo step.",
+        "View mode (Multi Lane Edit) and the other controllers (pitch bend, mod wheel, sustain, expression) are listed and marked not built yet; the lane under the notes is velocity."
+      ]
+    },
+    {
+      "version": "0.1.61",
+      "date": "2026-11-23",
+      "title": "The Track Panel follows the track you select",
+      "notes": [
+        "The row of track buttons at the top of the Track Panel is gone. Choose a track in the track view and the panel shows it, as in Reason. Click the Master Section lane to see the master's devices.",
+        "The selected track's lane is now marked with a coloured edge, and the Track Panel's heading is down to a single Pop out button, so the column has more room."
+      ]
+    },
+    {
+      "version": "0.1.60",
+      "date": "2026-11-23",
+      "title": "The Sequencer window",
+      "notes": [
+        "The main window is now laid out as three columns: the Browser on the left, the Track Panel for the selected track in the middle (its devices and sends, with its channel strip at the bottom), and the track view on the right. The page itself no longer scrolls. The Track Panel link and the Browser link switch their columns on and off.",
+        "The track view is much more compact: lanes are 30 px high (sound lanes a little taller so the waveform shows), a track header is just its name and M, S and R, and the big rows of buttons are gone. When you select a clip, one strip appears with Copy (shared), Copy (separate), Make unique, Split and Delete; More shows the sound, warp, chop and quantise tools for that clip.",
+        "The Piano roll, Automation and Step pattern now live in an Edit Area under the track view, as tabs. Double-click a note clip, or press Edit Area, to open it; drag its top edge to make it taller or shorter; close it with the cross.",
+        "Mixer and Rack show in place of the track view, and Track View brings it back. Both still pop out into their own windows.",
+        "The Browser lists devices as one compact row each (add with the + button; the category and tag filters are behind a Filter button), so many more fit on screen. The transport at the bottom is one slim line; timecode and seconds appear when you right-click the position display. PPQN moved to Settings, under Sync."
+      ]
+    },
+    {
+      "version": "0.1.59",
+      "date": "2026-11-23",
+      "title": "A Settings window",
+      "notes": [
+        "Settings is now a window of its own, with a list on the left (User Interface, Browsing, Audio, MIDI, Sync, Other Controls, Folders, Account) and one page on the right. It opens from the Settings link and the Options menu, stays where you leave it, and can sit on a second screen.",
+        "Sync and timecode, Keyboard shortcuts, the Analyser and the skin tools have moved off the main page into Settings, so the main page is just the work area. Save and Open are in the File menu as before.",
+        "The Audio page shows your sound card, its input channels and its reported input and output latency in one place. It also has a Latency adjustment (raise it if recorded audio plays back too late) and a Max audio threads choice (it takes effect the next time the program starts). Master tune, rendering with the audio card buffer size and Play in background are listed and marked not built yet.",
+        "The crash-recovery question is now asked in the main window only, not in the pop-out windows."
+      ]
+    },
+    {
+      "version": "0.1.58",
+      "date": "2026-11-23",
+      "title": "Pop-out Rack and Mixer, and Ctrl-drag copy",
+      "notes": [
+        "A Pop out button on the Tracks section opens the Strips, the Rack or the Mixer in a window of its own, for a second screen. It follows the same song live, has its own transport, and remembers where you left it and how big it was.",
+        "Hold Ctrl and drag a clip to copy it: the original stays and a copy lands where you drop it, on the grid and on any track. Hold Ctrl and Shift to make a shared copy (its notes or sound are shared with the original). Esc cancels. Moving a clip is unchanged."
+      ]
+    },
+    {
+      "version": "0.1.57",
+      "date": "2026-11-23",
+      "title": "Folders removed: a standard DAW layout",
+      "notes": [
+        "Track folders are gone. They confused more than they helped, and other DAWs of this kind leave them out, so Archie DAW now works the standard way: tracks, FX returns and the master. There is no Folders section, no Add Folder item, and no choice of output on a channel.",
+        "A project saved with folders still opens. Its tracks go straight to the master, and the program says that the folders were left out."
+      ]
+    },
+    {
+      "version": "0.1.56",
+      "date": "2026-11-22",
+      "title": "Archie Drums: all sixteen patterns on the website",
+      "notes": [
+        "A connected Archie Drums now shares all sixteen of its patterns, so a sound saved on the website can carry every pattern, and recalling it puts them all back. The plug-in has eight edit mailboxes now instead of one, so a whole change of patterns goes in quickly, and the connection keeps its heartbeat steady while edits are applied.",
+        "Step edits from the website can be for any pattern, not only the one on view."
+      ]
+    },
+    {
+      "version": "0.1.55",
+      "date": "2026-11-22",
+      "title": "More than one Archie Drums",
+      "notes": [
+        "You can now connect more than one copy of the same Archie device. Each copy in the rack has its own connection to Ask Archie, remembered with the song, and appears on the website as its own instrument (Archie Drums 1, Archie Drums 2, and so on). Each new copy asks you to confirm once in your browser.",
+        "Connect all to Archie now connects every copy, not one of each. A copy you paste or duplicate gets its own connection rather than sharing its original's."
+      ]
+    },
+    {
+      "version": "0.1.54",
+      "date": "2026-11-22",
+      "title": "Connect all to Archie, and Show on site",
+      "notes": [
+        "The Master Section in the Rack now has a Connect all to Archie button. It connects every Archie device in the rack to your Ask Archie account in one go and shows how many are connected. For now one of each device connects; a second copy of the same device is reported instead of fighting over the connection.",
+        "A connected device has a SHOW button on its rack unit. It tells the website to display that device and opens the page.",
+        "Archie Drums has a Bypass button in its window, and Bypass is a real control the DAW and the website can use. Bypassed, it is silent, nothing triggers, and no old delay tail comes back when you release it.",
+        "On the website, the Archie Drums page can now save and recall sounds with the same Save and arrow buttons as the other instruments, and has its own Bypass button.",
+        "Fixed: the program reported itself as version 0.1.45 inside, whatever it was. It now reports its real version."
+      ]
+    },
+    {
+      "version": "0.1.53",
+      "date": "2026-11-22",
+      "title": "Archie Drums comes with the DAW",
+      "notes": [
+        "Archie Drums, the 808 and 909 style drum machine with its 16-step sequencer, four banks of patterns and small 808 sound pack, now comes with the DAW. It is installed in a Devices folder next to the program, and the DAW finds it by itself the first time it starts, so it is in the plug-in list with no scan.",
+        "The 808 sounds are a small set of recordings by Michael Fischer (Technopolis, 1994), included with his notice; his readme and a note on where they came from are in the pack folder.",
+        "Archie Drum Box 2 has been retired from the starter list on the website. Anyone who already has it keeps it.",
+        "A scan now drops plug-ins whose file has gone, so the list never offers something that cannot load."
+      ]
+    },
+    {
+      "version": "0.1.52",
+      "date": "2026-11-22",
+      "title": "A steadier playhead on the website",
+      "notes": [
+        "A connected device now stamps the DAW position with the moment it was read, so the website can bring each report up to date instead of showing it late. The playhead on the Archie Drums page no longer jumps back or runs behind."
+      ]
+    },
+    {
+      "version": "0.1.51",
+      "date": "2026-11-22",
+      "title": "Edit Archie Drums from the website, and a playhead",
+      "notes": [
+        "A connected Archie Drums can now be edited from its page on the website: click a step to add a hit, click again for an accent, again to clear it, and drag to paint. The edits reach the real plug-in.",
+        "The website page also draws a moving line along the steps while the DAW plays, following the DAW's position and tempo, and its tempo and position display now works."
+      ]
+    },
+    {
+      "version": "0.1.50",
+      "date": "2026-11-22",
+      "title": "Archie Drums shows its pattern on the website",
+      "notes": [
+        "Fixed: a connected Archie Drums now shares the pattern it is showing. A hosted plug-in hands its saved state back inside a wrapper, and the DAW now reads the pattern out of it.",
+        "A connected device no longer sends the plug-in wrapper's hundreds of MIDI controller parameters to Ask Archie, only the device's own controls, which makes each update far smaller."
+      ]
+    },
+    {
+      "version": "0.1.49",
+      "date": "2026-11-21",
+      "title": "Archie Drums reconnects by itself",
+      "notes": [
+        "An Archie device you have connected to Ask Archie now reconnects on its own when it is loaded, so after you reopen the DAW or a song the website shows it live again without pressing ARCHIE."
+      ]
+    },
+    {
+      "version": "0.1.48",
+      "date": "2026-11-21",
+      "title": "Open a track's plug-in from the track",
+      "notes": [
+        "Double-click a track's name area to open the window of the plug-in on that track. Right-click a track header or a track lane and choose Open Instrument (plug-in window) for the same thing. If the track has no instrument yet, the DAW tells you to add one.",
+        "A connected Archie Drums now also shares the pattern it is showing, so the website can draw the same step grid as the plug-in."
+      ]
+    },
+    {
+      "version": "0.1.47",
+      "date": "2026-11-21",
+      "title": "Archie Drums connects to Ask Archie",
+      "notes": [
+        "Archie Drums, the new 808 and 909 style drum machine with a 16-step sequencer, four banks of patterns, mute and solo on every drum and a tempo-synced delay, now has an ARCHIE button on its rack unit. Press it, confirm in your browser, and Archie and the website can see its controls and change them.",
+        "The DAW does the connecting for the device: it keeps the connection between launches, so after the first time there is no browser step. If Ask Archie ever ends the connection, the button says RETRY.",
+        "The Master Section still shows Connect all to Archie as planned; for now each device connects from its own rack unit."
+      ]
+    },
+    {
+      "version": "0.1.46",
+      "date": "2026-11-21",
+      "title": "Delete any track",
+      "notes": [
+        "Any track can now be deleted, not only the last one. The tracks after it move up into its place with their plug-ins, clips, levels and sends, and Undo puts the deleted track back where it was.",
+        "Delete Track is also in the right-click menu on a track lane, next to Select this Track."
+      ]
+    },
+    {
+      "version": "0.1.45",
+      "date": "2026-11-21",
+      "title": "A browser column, a hardware rack and input routing for audio tracks",
+      "notes": [
+        "The device browser is now a column on the left of the Console. It stays in place while the page scrolls, and a button folds it away to a thin rail and back again; the program remembers which you chose. An instrument's New track button makes a track with that instrument ready to play, and an effect goes on the selected track.",
+        "Quick links across the top (Browser, Track Panel, Mixer, Rack, Track View, Edit Area, Automation, Groove, Help and Settings) show a part of the page or jump to it.",
+        "Devices in the rack are drawn as hardware: rack ears with screws, a brushed panel, the name in large letters, the kind, and a Bypass button that shows Active or Bypassed. The Master Section at the top of the rack has Start All Devices and Bypass All.",
+        "Audio tracks now have input routing. Choose Mono Input or Stereo Input and which input of the sound card the track listens to, and see its input level. A Monitor button lets you hear the input while it comes in, or only record it.",
+        "Fixed: a recording now takes only what the sound card hears, so it no longer records the clips that are playing back at the same time.",
+        "The program opens every input the sound card offers to Windows. If your interface shows only two inputs, that is all Windows Audio gives it; reaching every input of an interface such as the 1824c needs ASIO support, which is not in this build yet."
+      ]
+    },
+    {
+      "version": "0.1.44",
+      "date": "2026-11-21",
+      "title": "Track types: instrument tracks, audio tracks and folders",
+      "notes": [
+        "The track view now has different kinds of track. Instrument tracks and audio tracks have their own icons, and an audio track listens to the sound card input when you make it.",
+        "A + Track row at the bottom of the track view offers Add Audio Track, Add Track Folder, Add Instrument, and a quick list of your instrument devices, grouped by maker. Choosing an instrument makes a new track with it already loaded.",
+        "Folders now appear in the track view as rows of their own, with Mute, Solo and a volume slider. The tracks inside a folder sit beneath it, indented, and you can fold the folder away.",
+        "The Transport and Master Section rows are always present: they stay pinned under the ruler while the tracks scroll.",
+        "A track's type is saved with the song, copied with a duplicated track, and restored by undo."
+      ]
+    },
+    {
+      "version": "0.1.43",
+      "date": "2026-11-21",
+      "title": "The track view",
+      "notes": [
+        "The clips timeline is now the Track view, and it sits at the top of the Console page. Each track has its header on the left, with its colour, its name, Mute, Solo and Record buttons, and a volume slider. The lanes with their clips are on the right.",
+        "The first two rows are Transport, which shows the tempo changes along the song, and Master Section, which has the master level.",
+        "The tracks scroll up and down on their own. The ruler stays at the top and the headers stay on the left while you scroll.",
+        "Double-click a slider to set it to 0 dB. Double-clicking a track header no longer adds a clip.",
+        "Next, the quick links across the top and the pane layout."
+      ]
+    },
+    {
+      "version": "0.1.42",
+      "date": "2026-11-21",
+      "title": "The master section at the top of the rack",
+      "notes": [
+        "The master section is now the first thing in the rack, above the tracks, as in other DAWs."
+      ]
+    },
+    {
+      "version": "0.1.41",
+      "date": "2026-11-21",
+      "title": "Instruments and effects kept apart, and devices in containers",
+      "notes": [
+        "The device browser now opens on Instruments, with Effects, Utilities, All and Favourites beside it. Devices are grouped under their maker, with a count for each maker.",
+        "Every device card has a picture panel. When a plug-in has no picture of its own, it shows a VST 3 container, in orange for an instrument and blue for an effect.",
+        "The add plug-in menus are grouped into Instruments, Effects and Utilities, each in name order.",
+        "The rack now draws each device in a container, as in other DAWs: a vertical name tab, a Bypass and On switch, the name, maker and kind, the picture panel with an Open button, in and out meters, and move and remove buttons.",
+        "Next, the track view, with a volume slider for each track beside the sequencer lanes, and quick links across the top."
+      ]
+    },
+    {
+      "version": "0.1.40",
+      "date": "2026-11-21",
+      "title": "A console-style mixer with knobs and coloured sections",
+      "notes": [
+        "The Mixer view is laid out like a console. Each channel has coloured sections: Inserts in orange, Send in blue and Channel in green, with the name tab in the channel's own colour. The master section holds the FX returns in purple.",
+        "Pan, the eight sends and the FX returns now use rotary knobs. Drag a knob up or down, hold Shift for fine control, use the mouse wheel, double-click to reset it, or use the arrow keys.",
+        "Every channel has Bypass and Edit Inserts buttons, Mute, Solo and Rec buttons, an Output choice (the master or a sub routing group), and SEQ and RACK buttons that jump to its clips and its rack. Double-click a fader to set it to 0 dB.",
+        "Automation buttons are in place. Each channel and each FX return has an AUTO button. Click it to make a level lane, then click it again to switch the channel's lanes off and on. Right-click a level or pan control to automate just that control.",
+        "The master section has Mute All Off and Solo All Off buttons.",
+        "There is no EQ section yet, because the program has no channel EQ. When it does, it will get its own coloured section on the strip."
+      ]
+    },
+    {
+      "version": "0.1.39",
+      "date": "2026-11-21",
+      "title": "The transport stays at the bottom, on every page",
+      "notes": [
+        "The transport module is now docked at the bottom of the window, like in other DAWs. It is the same module as before, with the same buttons and displays, and it stays in place whichever tab or page you are on, including the whole of the Ask Archie site.",
+        "The Console page no longer draws its own copy, so there is only one transport.",
+        "The Panic button now lives in the transport module, so it is always within reach."
+      ]
+    },
+    {
+      "version": "0.1.38",
+      "date": "2026-11-21",
+      "title": "Panic: a hung note can always be shut down",
+      "notes": [
+        "There is now a Panic button next to Tap tempo, a Panic item in the Options menu, and the key Shift and Escape. It silences everything at once: it releases every note on every track and resets every plug-in, which ends a hung voice and clears delay and reverb tails. It does not stop the song.",
+        "Stopping the song now also tells every plug-in that all notes are off, so a note that was started some other way cannot keep sounding.",
+        "Panic is in the command list, so your own AI can use it too."
+      ]
+    },
+    {
+      "version": "0.1.37",
+      "date": "2026-11-21",
+      "title": "Plug-ins with many outputs no longer close the program",
+      "notes": [
+        "Fixed a crash that closed the program when you added a plug-in with many outputs, such as a sampler or drum machine with an output for every pad. Archie Sampler V2 and UltraTap now load, play and open their own windows.",
+        "Plug-ins now use one stereo pair, with any extra outputs and side-chain inputs switched off. The sound from those extra outputs comes through the main pair.",
+        "The crash note now records the whole path of the fault, so the plug-in at fault is found even when the fault lands in Windows or a shared runtime.",
+        "The Roland TR-808 and TR-909 still close the program when they are added. The cause is inside Roland's plug-ins. After the first crash the program remembers them and asks before it loads them again."
+      ]
+    },
+    {
+      "version": "0.1.36",
+      "date": "2026-11-21",
+      "title": "Archie DAW: a name, an icon and a manual",
+      "notes": [
+        "The program is now called Archie DAW, and it has its own icon on the program, the installer and the shortcuts.",
+        "A manual is installed with the program. Open it from Help, then Open the Manual, or from the Start menu. It is generated from the program's real keys and commands, so it always matches your version.",
+        "Updating removes the old Archie Studio shortcuts, so you do not end up with two."
+      ]
+    },
+    {
+      "version": "0.1.35",
+      "date": "2026-11-20",
+      "title": "Finding the plug-in that closed the program",
+      "notes": [
+        "When the program is closed by a fault, it now records which plug-in file the fault was in, even if the plug-in failed some time after it loaded.",
+        "The next time you start, that plug-in is remembered, and the program asks before it loads it again.",
+        "Half-written recovery files left behind by a crash are cleaned up at the next start."
+      ]
+    },
+    {
+      "version": "0.1.34",
+      "date": "2026-11-20",
+      "title": "Your song survives a crash",
+      "notes": [
+        "Your song is kept every minute. If the program is closed by a crash, the next start offers your song back.",
+        "A plug-in that closed the program before is left out when you open a song, and the program tells you which one it was, so the song still opens.",
+        "Opening a plug-in's own window now has the same protection as loading the plug-in."
+      ]
+    },
+    {
+      "version": "0.1.33",
+      "date": "2026-11-20",
+      "title": "A guard for plug-ins that close the program",
+      "notes": [
+        "If the program closes while a plug-in is loading, it remembers that plug-in. The next time you try to add it, the program explains what happened and lets you choose whether to try again.",
+        "Fixed a fault in how the list of recent songs was read."
+      ]
+    },
+    {
+      "version": "0.1.32",
+      "date": "2026-11-20",
+      "build": 1,
+      "title": "Build 1: the first published build",
+      "notes": [
+        "This is Build 1. The program is almost complete and in testing, and each later update has its own version number.",
+        "It is a DAW: up to 32 tracks with sub routing, FX sends and a master, note and audio clips on a timeline, a piano roll, warping to the song's tempo, recording, automation, undo and redo, and a keyboard you can change.",
+        "Right-click menus on tracks, clips and plug-ins. Clips can be moved, resized, split, copied, duplicated, coloured, named, muted, joined and chopped.",
+        "Export the song or the loop as a wav file (16, 24 or 32-bit), save and read standard MIDI files, and bounce a clip to audio or to MIDI.",
+        "Copy, paste and duplicate whole channels. Save songs, reopen recent ones, and start new songs from templates.",
+        "It loads your own VST3 plug-ins, and the pages of Ask Archie open inside it, sharing one play button."
+      ]
+    }
+  ],
+  "origin": {
+    "title": "Where Archie DAW came from",
+    "intro": "Archie DAW began as a way to test the VST plug-ins people build in Ask Archie, and grew into a DAW. It was built in small, logged steps. Each step is a brief: what was asked, what was built, how it was proved, and what was left open. The steps are below, and so are the unfinished ones, so anyone can see where it started and add their bit.",
+    "stages": [
+      {
+        "title": "A host for your plug-ins",
+        "text": "A free program that loads your own VST3 plug-ins, plays them, and shows the Ask Archie pages inside it, with one shared play button."
+      },
+      {
+        "title": "A true time base",
+        "text": "Sample-accurate time that follows tempo changes, so everything stays in step."
+      },
+      {
+        "title": "Its own mixer",
+        "text": "A mixer that renders tracks in parallel, lines up plug-ins that delay the sound, and gives the same result on any computer."
+      },
+      {
+        "title": "Songs, undo and clips",
+        "text": "Songs you can save, undo and redo, clips that can share their notes, sub routing, a track panel, a rack and a device browser."
+      },
+      {
+        "title": "Sound and notes",
+        "text": "Audio tracks, fades, chop, quantise, warping to the song's tempo, recording, automation lanes and a piano roll."
+      },
+      {
+        "title": "What producers expect",
+        "text": "Right-click menus, tools, tap tempo, a menu bar and keys you can change, planned from what a producer's hands expect."
+      },
+      {
+        "title": "Getting music out",
+        "text": "Export the song or a loop as a wav file, and read and write MIDI files."
+      },
+      {
+        "title": "Working with clips and channels",
+        "text": "Mute, name, join and bounce clips, copy and duplicate channels, and start songs from templates. This was published as Build 1."
+      },
+      {
+        "title": "Staying safe",
+        "text": "Your song is kept every minute, and a plug-in that closes the program is remembered, so the program can ask before it loads it again."
+      },
+      {
+        "title": "Archie DAW",
+        "text": "A name, an icon, an installed manual, and release notes for every version."
+      }
+    ],
+    "open": [
+      {
+        "title": "Shortcut review",
+        "goal": "Settle the hand shortcuts for every menu item."
+      },
+      {
+        "title": "Plug-ins in a separate process",
+        "goal": "Make it so that a plug-in that crashes cannot close the program."
+      },
+      {
+        "title": "More safeguards",
+        "goal": "Protect against damaged files, a project from a newer version, a removed sound card, a full disk and an overloaded computer."
+      },
+      {
+        "title": "One-step shortcuts",
+        "goal": "Add single actions for what people want to do, such as capture an idea, loop this, tidy, group and make a variation."
+      },
+      {
+        "title": "A PDF manual",
+        "goal": "Offer the manual as a real PDF as well as the page installed with the program."
+      },
+      {
+        "title": "A place for continuing the build",
+        "goal": "Let others continue the work, with their own release notes, and let an updated build from someone else become the current one."
+      },
+      {
+        "title": "Mac and signing",
+        "goal": "Test on a Mac, and sign the installer so Windows does not warn about it."
+      }
+    ]
+  }
+}

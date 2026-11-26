@@ -1,0 +1,527 @@
+{
+  "schema": 1,
+  "about": "The default keyboard shortcuts of Archie DAW (desktop), as DATA. Each entry binds a key combination to a COMMAND: either a tool from studio-tools.json (so keyboard, buttons, web pages and Archie share one path and one undo) or a console action named ui.* (listed in uiCommands). The person's own changes are saved beside the skin. Source of the Reason entries: a list of what Reason provides, collected on 2026-11-20, kept so we can use what we need and invent the rest. Every entry says how real it is: ready (works now), progress (being built), pending (the feature it needs does not exist yet).",
+  "keys": "Ctrl means Ctrl on Windows and Command on a Mac. A key list is alternatives.",
+  "contexts": {
+    "global": "anywhere in the program except a text box and a plug-in's own window",
+    "mixer": "when the Mixer view is showing",
+    "rack": "when the Rack view is showing",
+    "sequencer": "when the sequencer is showing (not built yet)"
+  },
+  "uiCommands": {
+    "ui.viewMixer": "show the Mixer view",
+    "ui.viewRack": "show the Rack view",
+    "ui.cue1": "hot cue 1",
+    "ui.cue2": "hot cue 2",
+    "ui.cue3": "hot cue 3",
+    "ui.viewStrips": "show the track strips",
+    "ui.viewSequencer": "show the sequencer only",
+    "ui.toggleEditArea": "show or hide the edit area",
+    "ui.toggleMetronome": "click on or off",
+    "ui.toggleRecord": "record on or off",
+    "ui.returnToStart": "move the playhead to the start",
+    "ui.toggleKeyboardPiano": "the computer keyboard plays notes (A S D F ...) on or off",
+    "ui.showOnScreenPiano": "show or hide the on-screen piano keys",
+    "ui.showSpectrum": "show or hide the spectrum EQ / analyser window",
+    "ui.showDevicePalette": "show or hide the device palette (the plug-in browser)",
+    "ui.searchDevices": "show the device palette with the search box ready",
+    "ui.showBrowser": "show or hide the browser",
+    "ui.browseForSelected": "open the browser focused on the selected device",
+    "ui.showRecordingMeter": "show or hide the recording meter",
+    "ui.flipRack": "turn the rack to its back panel and front again",
+    "ui.newProject": "start a new project",
+    "ui.saveProjectAs": "save the project under a new name",
+    "ui.closeWindow": "close the active detached window or the project",
+    "ui.delete": "delete the selected devices, tracks, clips or notes",
+    "ui.deleteNoWarning": "delete the selection without asking",
+    "ui.duplicate": "duplicate the selection",
+    "ui.selectAll": "select everything in the active area",
+    "ui.routeToNewBus": "route the selected tracks to a new output bus",
+    "ui.createInstrumentTrack": "create an instrument track and open the device palette",
+    "ui.importAudio": "import an audio file",
+    "ui.exit": "quit the program",
+    "ui.copy": "copy the chosen notes (pointer over the piano roll) or the selected clip",
+    "ui.cut": "cut the chosen notes (pointer over the piano roll)",
+    "ui.paste": "paste: the copied notes into the piano roll at the playhead, or a copy of the copied clip at the playhead on the selected track",
+    "ui.splitAtPlayhead": "cut the selected clip in two at the playhead",
+    "ui.addInstrument": "open the device browser on the instruments, to add one to the selected channel",
+    "ui.addEffect": "open the device browser on the effects, to add one to the selected channel",
+    "ui.addClip": "add an empty note clip at the playhead on the selected track",
+    "ui.toolSelect": "the select tool",
+    "ui.toolPencil": "the pencil tool",
+    "ui.toolEraser": "the eraser tool",
+    "ui.toolHand": "the hand tool",
+    "ui.toolZoom": "the zoom tool",
+    "ui.toolRazor": "the razor tool",
+    "ui.toolListen": "the listen tool",
+    "ui.tapTempo": "tap the tempo"
+  },
+  "bindings": [
+    {
+      "keys": [
+        "Space"
+      ],
+      "command": "toggle",
+      "context": "global",
+      "status": "ready",
+      "note": "play / stop"
+    },
+    {
+      "keys": [
+        "C"
+      ],
+      "command": "ui.toggleMetronome",
+      "context": "global",
+      "status": "ready",
+      "note": "click"
+    },
+    {
+      "keys": [
+        "0",
+        "Numpad0"
+      ],
+      "command": "stop",
+      "context": "global",
+      "status": "ready",
+      "note": "stop; a second tap returns to the start, which is how Stop already works"
+    },
+    {
+      "keys": [
+        "Home"
+      ],
+      "command": "ui.returnToStart",
+      "context": "global",
+      "status": "ready",
+      "note": "to the start"
+    },
+    {
+      "keys": [
+        "R"
+      ],
+      "command": "ui.toggleRecord",
+      "context": "global",
+      "status": "ready",
+      "note": "arm / start recording; a 'start button arm record' key was asked for: still to be confirmed"
+    },
+    {
+      "keys": [
+        "Ctrl+Z"
+      ],
+      "command": "undo",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Undo"
+    },
+    {
+      "keys": [
+        "Ctrl+Y",
+        "Ctrl+Shift+Z"
+      ],
+      "command": "redo",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Redo"
+    },
+    {
+      "keys": [
+        "Ctrl+S"
+      ],
+      "command": "saveProject",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Save Song"
+    },
+    {
+      "keys": [
+        "Ctrl+Shift+S"
+      ],
+      "command": "ui.saveProjectAs",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Save Song As (the save dialog always lets the person choose a name)"
+    },
+    {
+      "keys": [
+        "Ctrl+O"
+      ],
+      "command": "loadProject",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Open Song"
+    },
+    {
+      "keys": [
+        "Ctrl+N"
+      ],
+      "command": "ui.newProject",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Create new Song"
+    },
+    {
+      "keys": [
+        "Ctrl+W"
+      ],
+      "command": "ui.closeWindow",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: close the active detached Rack or Mixer window / close the Song"
+    },
+    {
+      "keys": [
+        "Alt+F4"
+      ],
+      "command": "ui.exit",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Exit (Windows); the operating system provides this"
+    },
+    {
+      "keys": [
+        "Ctrl+Shift+I"
+      ],
+      "command": "loadFile",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Import Audio File (opens the file chooser and puts the sound on the selected track at the playhead)"
+    },
+    {
+      "keys": [
+        "Ctrl+T"
+      ],
+      "command": "addTrack",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Create Audio Track (our tracks are one kind: this adds a track)"
+    },
+    {
+      "keys": [
+        "Ctrl+I",
+        "Insert"
+      ],
+      "command": "ui.addInstrument",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Add Instrument. Here: opens the device browser on the instruments"
+    },
+    {
+      "keys": [
+        "F5"
+      ],
+      "command": "ui.viewMixer",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Show/Hide Main Mixer"
+    },
+    {
+      "keys": [
+        "F6"
+      ],
+      "command": "ui.viewRack",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Show/Hide Rack"
+    },
+    {
+      "keys": [
+        "F7"
+      ],
+      "command": "ui.viewSequencer",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Show Sequencer Only"
+    },
+    {
+      "keys": [
+        "F8"
+      ],
+      "command": "ui.toggleEditArea",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Show/Hide Edit Area"
+    },
+    {
+      "keys": [
+        "F2"
+      ],
+      "command": "ui.showSpectrum",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Spectrum EQ window (ours: the Analyser)"
+    },
+    {
+      "keys": [
+        "F3"
+      ],
+      "command": "ui.showDevicePalette",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Device Palette"
+    },
+    {
+      "keys": [
+        "Ctrl+Shift+F"
+      ],
+      "command": "ui.searchDevices",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Device Palette with the search field focused"
+    },
+    {
+      "keys": [
+        "F9"
+      ],
+      "command": "ui.showBrowser",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Show/hide Browser"
+    },
+    {
+      "keys": [
+        "Ctrl+F"
+      ],
+      "command": "ui.showBrowser",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Open Browser without Browse Focus"
+    },
+    {
+      "keys": [
+        "Ctrl+B"
+      ],
+      "command": "ui.browseForSelected",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Open Browser with Browse Focus for the selected device"
+    },
+    {
+      "keys": [
+        "Ctrl+F3"
+      ],
+      "command": "ui.showRecordingMeter",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Show/Hide Recording Meter"
+    },
+    {
+      "keys": [
+        "F4"
+      ],
+      "command": "ui.showOnScreenPiano",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: On-screen Piano Keys window"
+    },
+    {
+      "keys": [
+        "Tab"
+      ],
+      "command": "ui.flipRack",
+      "context": "rack",
+      "status": "ready",
+      "note": "Reason: Toggle Rack front/rear"
+    },
+    {
+      "keys": [
+        "Delete"
+      ],
+      "command": "ui.delete",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Delete. Here: the chosen notes while the pointer is over the piano roll, otherwise the selected clip"
+    },
+    {
+      "keys": [
+        "Ctrl+Delete",
+        "Ctrl+Backspace"
+      ],
+      "command": "ui.deleteNoWarning",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: delete without warning"
+    },
+    {
+      "keys": [
+        "Ctrl+D"
+      ],
+      "command": "ui.duplicate",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Duplicate. Here: copy the chosen notes after themselves while the pointer is over the piano roll, otherwise copy the selected clip (shared)"
+    },
+    {
+      "keys": [
+        "Ctrl+A"
+      ],
+      "command": "ui.selectAll",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Select All. Here: every note in the piano roll while the pointer is over it"
+    },
+    {
+      "keys": [
+        "Ctrl+G"
+      ],
+      "command": "ui.routeToNewBus",
+      "context": "global",
+      "status": "pending",
+      "note": "Reason: Route to New Output Bus"
+    },
+    {
+      "keys": [
+        "Ctrl+C"
+      ],
+      "command": "ui.copy",
+      "context": "global",
+      "status": "ready",
+      "note": "Copy (notes in the piano roll, or the selected clip)"
+    },
+    {
+      "keys": [
+        "Ctrl+X"
+      ],
+      "command": "ui.cut",
+      "context": "global",
+      "status": "ready",
+      "note": "Cut (notes in the piano roll)"
+    },
+    {
+      "keys": [
+        "Ctrl+V"
+      ],
+      "command": "ui.paste",
+      "context": "global",
+      "status": "ready",
+      "note": "Paste (notes into the piano roll, or a copy of the clip at the playhead)"
+    },
+    {
+      "keys": [
+        "Alt+X"
+      ],
+      "command": "ui.splitAtPlayhead",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Split Clips at Song Position"
+    },
+    {
+      "keys": [
+        "Ctrl+E"
+      ],
+      "command": "ui.addEffect",
+      "context": "global",
+      "status": "ready",
+      "note": "Reason: Add Effect. Here: opens the device browser on the effects"
+    },
+    {
+      "keys": [
+        "Alt+1",
+        "Numpad1"
+      ],
+      "command": "ui.cue1",
+      "context": "global",
+      "status": "ready",
+      "note": "Hot cue 1: jump to that loop (makes it at the playhead when empty). The plain number keys stay the tools"
+    },
+    {
+      "keys": [
+        "Alt+2",
+        "Numpad2"
+      ],
+      "command": "ui.cue2",
+      "context": "global",
+      "status": "ready",
+      "note": "Hot cue 2: jump to that loop (makes it at the playhead when empty). The plain number keys stay the tools"
+    },
+    {
+      "keys": [
+        "Alt+3",
+        "Numpad3"
+      ],
+      "command": "ui.cue3",
+      "context": "global",
+      "status": "ready",
+      "note": "Hot cue 3: jump to that loop (makes it at the playhead when empty). The plain number keys stay the tools"
+    },
+    {
+      "keys": [
+        "1"
+      ],
+      "command": "ui.toolSelect",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: select"
+    },
+    {
+      "keys": [
+        "2"
+      ],
+      "command": "ui.toolPencil",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: pencil"
+    },
+    {
+      "keys": [
+        "3"
+      ],
+      "command": "ui.toolEraser",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: eraser"
+    },
+    {
+      "keys": [
+        "4"
+      ],
+      "command": "ui.toolHand",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: hand"
+    },
+    {
+      "keys": [
+        "5"
+      ],
+      "command": "ui.toolZoom",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: zoom"
+    },
+    {
+      "keys": [
+        "6"
+      ],
+      "command": "ui.toolRazor",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: razor"
+    },
+    {
+      "keys": [
+        "7"
+      ],
+      "command": "ui.toolListen",
+      "context": "global",
+      "status": "ready",
+      "note": "Tool: listen"
+    },
+    {
+      "keys": [
+        "Shift+Escape"
+      ],
+      "command": "panic",
+      "context": "global",
+      "status": "ready",
+      "note": "Panic: silence everything, even a hung note (2026-11-21: a note hung and could not be shut down)"
+    },
+    {
+      "keys": [
+        "Shift+T"
+      ],
+      "command": "ui.tapTempo",
+      "context": "global",
+      "status": "ready",
+      "note": "Tap tempo (a letter on its own is a piano key, so it has Shift)"
+    }
+  ]
+}
