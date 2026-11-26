@@ -2,6 +2,17 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.153",
+      "date": "2026-11-26",
+      "title": "Archies Alien Delay comes with the program",
+      "notes": [
+        "New effect: Archies Alien Delay, a tempo-synced delay. Switch each delay time on or off, and the Time knob walks only the times you left on, so it never passes through ones you do not want.",
+        "Straight, Even only and Everything set the times in one press. A change can be a clean crossfade or a tape-style swoop, at once or on the next beat.",
+        "For live dub: Throw, Freeze, feedback up to self-oscillation, low cut, high cut and drive. Every control can be mapped to a controller.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.152",
       "date": "2026-11-26",
       "title": "Routing: buses, parallel channels and send effects",
