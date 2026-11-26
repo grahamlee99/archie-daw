@@ -552,6 +552,7 @@
   .mx-ins .mx-btnrow { flex-direction:column; } .mx-ins button.mxb { padding:3px 5px; }
   .mx-ins .mx-slot { padding:1px 2px; } .mx-ins .mx-slot button { padding:0 3px; }
   .mx-pan .kcol { flex-direction:row; justify-content:center; gap:8px; }
+  .mx-route { padding-bottom:4px; } .mx-role { margin:3px 4px 0; font:700 9px/1.2 var(--font); letter-spacing:0.06em; color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .mx-key { display:flex; align-items:center; gap:4px; margin:3px 4px 0; font:700 8px/1 var(--font); letter-spacing:0.08em; color:var(--muted); } .mx-key select { flex:1; min-width:0; font-size:10px; padding:1px 2px; }
   .mx-pan .msr button.au { flex:1; }
 
@@ -1709,6 +1710,15 @@
     var s = e.target && e.target.getAttribute && e.target.getAttribute("data-sc"); if (!s) return; var v = +e.target.value, ti = +e.target.getAttribute("data-sct"); e.target.blur();
     (s === "mcKey" ? host("masterComp", { key: s, value: v }) : host("track", { track: ti, key: s, value: v })).then(function (r) { if (r && r.ok === false) log(r.error, true); });
   });
+  // OUT: the master, or a bus channel (never itself, nor a bus that already comes back to it)
+  function outPick(t) {
+    var tracks = (S.state && S.state.tracks) || [], byUid = {}; tracks.forEach(function (x) { byUid[x.uid] = x; });
+    function loops(b) { for (var x = b, n = 0; x && n <= tracks.length; x = byUid[x.outTo], n++) if (x.uid === t.uid) return true; return false; }
+    var h = '<label class="mx-key" title="Where the sound of this channel goes: the master, or a bus (mix channel) where several tracks are treated together"><span>OUT</span><select data-sc="outTo" data-sct="' + t.index + '"><option value="0">Master</option>';
+    tracks.forEach(function (b) { if (b.kind !== 2 || loops(b)) return; h += '<option value="' + b.uid + '"' + (b.uid === t.outTo ? " selected" : "") + ">" + esc(b.name) + "</option>"; });
+    var from = t.parallelFrom ? byUid[t.parallelFrom] : null, tag = t.kind === 2 ? "BUS" : from ? "Parallel of " + from.name : "";
+    return h + "</select></label>" + (tag ? '<div class="mx-role">' + esc(tag) + "</div>" : "");
+  }
   function mxDyn(t) {
     var thr = t.compThr === undefined ? -18 : t.compThr, ratio = t.compRatio || 4, rel = t.compRel || 0.3, mk = t.compMakeup || 0;
     function kn(label, key, opts, text, tkey, title) { return '<div class="kcol">' + knobHtml(Object.assign({ title: title + " (drag, wheel, double-click for the starting value)", attrs: 'data-k="' + key + '"' }, opts)) + '<span class="kl" data-dv="' + tkey + '">' + text + "</span><span class=\"kl\">" + label + "</span></div>"; }
@@ -1830,7 +1840,7 @@
   function wireDim() { Array.prototype.forEach.call(document.querySelectorAll("[data-crdim]"), function (b) { b.onclick = function () { var cr = (S.state && S.state.controlRoom) || {}; host("controlRoom", { key: "crDim", value: !cr.crDim }); }; }); }
   function mxNb(name, why) { return '<div class="mx-sec mx-nb" title="' + esc(why || (name + " needs an effect this program does not have yet. It is shown so you can see where it will go.")) + '"><div class="mx-bar sec-nb">' + esc(name) + "<i>not built</i></div></div>"; }
   function drawMixer(st) {
-    var key = JSON.stringify([st.masterComp && [st.masterComp.mcOn, st.masterComp.mcPeak, st.masterComp.mcKey], st.masterSound && [st.masterSound.amOn, st.masterSound.amCut, Math.round(st.masterSound.amTarget || 0)], st.controlRoom && [st.controlRoom.crDim, st.controlRoom.crPair], st.outputChannels, st.tracks.map(function (t) { return [t.name, t.colour, t.inInvert, t.eqHpOn, t.eqLpOn, t.compOn, t.compPeak, t.compFast, t.gateOn, t.gateExp, t.gateFast, t.uid, t.compKey, t.gateKey, t.slots, t.mute, t.solo, t.armed, t.autoLanes, t.autoOn, t.sends.map(function (s) { return [s.db > -59.5, s.pre]; })]; }), st.returns.map(function (r) { return [r.name, r.slots, r.mute, r.autoLanes, r.autoOn]; }), st.masterSection, st.plugins.length, S.sel]);
+    var key = JSON.stringify([st.masterComp && [st.masterComp.mcOn, st.masterComp.mcPeak, st.masterComp.mcKey], st.masterSound && [st.masterSound.amOn, st.masterSound.amCut, Math.round(st.masterSound.amTarget || 0)], st.controlRoom && [st.controlRoom.crDim, st.controlRoom.crPair], st.outputChannels, st.tracks.map(function (t) { return [t.name, t.colour, t.inInvert, t.eqHpOn, t.eqLpOn, t.compOn, t.compPeak, t.compFast, t.gateOn, t.gateExp, t.gateFast, t.uid, t.compKey, t.gateKey, t.outTo, t.parallelFrom, t.kind, t.slots, t.mute, t.solo, t.armed, t.autoLanes, t.autoOn, t.sends.map(function (s) { return [s.db > -59.5, s.pre]; })]; }), st.returns.map(function (r) { return [r.name, r.slots, r.mute, r.autoLanes, r.autoOn]; }), st.masterSection, st.plugins.length, S.sel]);
     if (key === S.mxKey) { syncMixerValues(st); return; }
     S.mxKey = key;
     var h = "";
@@ -1838,7 +1848,7 @@
     st.tracks.forEach(function (t) {
       var hex = colourHex(t.colour), tc = hex || "var(--accent)";
       h += '<div class="mch' + (t.index === S.sel ? " sel" : "") + '" data-t="' + t.index + '">';
-      h += mxInput(t) + mxDyn(t) + mxEq(t);
+      h += mxInput(t) + '<div class="mx-sec mx-route">' + outPick(t) + "</div>" + mxDyn(t) + mxEq(t);
       h += mxInserts(t.index, t.slots, "Inserts", tc, insRows);
       h += '<div class="mx-sec mx-sends"><div class="mx-bar sec-snd">Send</div>';
       t.sends.forEach(function (s, i) {
@@ -2182,6 +2192,7 @@
     "ui.preferences": function () { openSettings(""); },
     "ui.songInfo": function () { songInfo(); },
     "ui.exit": function () { confirmBox("Close Archie DAW? Anything in the open song that is not saved is lost.", "Exit", function () { host("quit"); }); },
+    "ui.routeToNewBus": function () { if (!(S.state && S.state.tracks.length)) return false; routeCmd("routeToNewBus", { track: S.sel }); },
     "ui.cue1": function () { cuePress(0); }, "ui.cue2": function () { cuePress(1); }, "ui.cue3": function () { cuePress(2); },
     "ui.splitAtPlayhead": function () { if (!findInst(S.selInst)) return false; $("aSplit").click(); },
     "ui.addInstrument": function () { DB.tab = "instrument"; DB.cat = ""; DB.sig = ""; $("dbBody").style.display = ""; $("dbToggle").textContent = "Hide"; drawBrowser(S.state); $("dbSearch").focus(); $("dbBar").scrollIntoView(); },
@@ -2748,6 +2759,15 @@
       return pl.slice(0, 40).map(function (p) { return { label: p.name + (p.cats && p.cats.length ? "  (" + p.cats[0] + ")" : ""), run: function () { dbAdd(p, tg); } }; });
     };
   }
+  // ROUTING: effects shared by sends, mix channels (buses), and parallel channels
+  function routeCmd(cmd, params) { host(cmd, params || {}).then(function (r) { if (r && r.ok === false) log(r.error, true); }); }
+  function sendFxMenu() {      // puts an effect on the first free FX return; the sends to it start switched off
+    var st = S.state || {}, r = -1; (st.returns || []).some(function (x, i) { if (!(x.slots || []).length) { r = i; return true; } return false; });
+    if (r < 0) return [N("(all 8 FX returns are in use)", "")];
+    var fx = (st.plugins || []).filter(function (p) { return (p.kind || (p.instrument ? "instrument" : "effect")) !== "instrument"; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    if (!fx.length) return [N("(none known: scan for plug-ins)", "")];
+    return fx.slice(0, 60).map(function (p) { return { label: p.name, run: function () { host("addPlugin", { track: 100 + r, id: p.id }).then(function (x) { if (x && x.ok === false) log(x.error, true); else log(p.name + " is on FX return " + (r + 1) + ". Turn up send " + (r + 1) + " on a track to hear it."); }); } }; });
+  }
   function trackMenu(ti) {
     var st = S.state, t = st.tracks[ti]; if (!t) return [];
     return [
@@ -2755,12 +2775,12 @@
       { label: "Cut Channels and Tracks", off: ti !== st.tracks.length - 1 || st.tracks.length <= 1, hint: "the last track only", run: function () { host("cutChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); else S.chanClip = true; }); } }, { label: "Copy Channels and Tracks", run: function () { host("copyChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); else { S.chanClip = true; log("Copied " + t.name + " (paste adds a new track at the end)"); } }); } }, { label: "Paste Channels and Tracks", off: !S.chanClip, hint: "copy a channel first", run: function () { host("pasteChannel").then(function (r) { if (r && r.ok === false) log(r.error, true); }); } },
       { label: "Delete Channels and Tracks", run: tool("removeTrack", { track: t.index }) }, { label: "Duplicate Channels and Tracks", run: function () { host("duplicateChannel", { track: t.index }).then(function (r) { if (r && r.ok === false) log(r.error, true); }); } },
       "-", N("Select All in Device Group"), "-",
-      N("Create Send FX..."),
-      { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, N("Add Player..."), { label: "Add Audio Track", cmd: "addTrack" }, N("Add Mix Channel"), { label: "Find in Browser", cmd: "ui.searchDevices" },
+      { label: "Create Send FX...", sub: sendFxMenu },
+      { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, N("Add Player..."), { label: "Add Audio Track", cmd: "addTrack" }, { label: "Add Mix Channel", run: function () { routeCmd("addBus"); } }, { label: "Find in Browser", cmd: "ui.searchDevices" },
       "-",
       { label: "Instrument Devices", sub: deviceSub("instrument") }, { label: "Effect Devices", sub: deviceSub("effect") }, { label: "Utility Devices", sub: deviceSub("utility") }, N("Player Devices"), { label: "Find Device", cmd: "ui.searchDevices" },
       "-",
-      N("Create Parallel Channel"),
+      { label: "Create Parallel Channel", run: function () { routeCmd("parallelChannel", { track: t.index }); } }, { label: "Route to New Output Bus", cmd: undefined, hint: "Ctrl+G", run: function () { routeCmd("routeToNewBus", { track: t.index }); } },
       "-",
       { label: "Copy Channel Settings", run: function () { S.chanCopy = { from: t.name, gainDb: t.gainDb, pan: t.pan, mute: t.mute, solo: t.solo, colour: t.colour, sends: (t.sends || []).map(function (s) { return { lvl: s.lvl, on: s.on, pre: s.pre }; }) }; log("Copied the settings of " + t.name + " (level, pan, mute, solo, colour, sends). Paste them on another channel."); } },
       { label: "Paste Channel Settings", off: !S.chanCopy, hint: S.chanCopy ? "from " + S.chanCopy.from : "copy some first", run: function () { var c = S.chanCopy; host("track", { track: t.index, key: "gainDb", value: c.gainDb }); host("track", { track: t.index, key: "pan", value: c.pan }); host("track", { track: t.index, key: "mute", value: c.mute }); host("track", { track: t.index, key: "solo", value: c.solo }); host("track", { track: t.index, key: "colour", value: c.colour }); c.sends.forEach(function (s, i) { host("sendLevel", { track: t.index, send: i, db: s.lvl }); host("sendPre", { track: t.index, send: i, pre: !!s.pre }); host("sendOn", { track: t.index, send: i, on: !!s.on }); }); log("Pasted the settings of " + c.from + " onto " + t.name + "."); } },
@@ -2887,7 +2907,7 @@
         { label: "Quantise Notes to Snap", run: function () { $("rQ").click(); } }, { label: "Quantise Sound Clips", run: function () { $("aQuant").click(); } }, "-", { label: "Preferences...", cmd: "ui.preferences" }
       ],
       Create: [
-        { label: "Add Audio Track", cmd: "addTrack" }, { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, N("Add Player..."), N("Create Send FX..."), N("Add Mix Channel"), "-",
+        { label: "Add Audio Track", cmd: "addTrack" }, { label: "Add Instrument...", cmd: "ui.addInstrument" }, { label: "Add Effect...", cmd: "ui.addEffect" }, N("Add Player..."), { label: "Create Send FX...", sub: sendFxMenu }, { label: "Add Mix Channel", run: function () { routeCmd("addBus"); } }, { label: "Create Parallel Channel", off: function () { return !(S.state && S.state.tracks.length); }, run: function () { routeCmd("parallelChannel", { track: S.sel }); } }, { label: "Route to New Output Bus", cmd: "ui.routeToNewBus" }, "-",
         { label: "Add Note Clip at Playhead", cmd: "ui.addClip" }, { label: "Import Audio File...", cmd: "loadFile" }, { label: "Add Automation Lane...", run: function () { showAutomationFor(S.sel); } }
       ],
       View: [

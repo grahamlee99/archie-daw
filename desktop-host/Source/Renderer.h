@@ -162,6 +162,7 @@ struct TrackPlan
     SendPlan sends[kSends];
     bool anyPre = false;
     int index = 0, delay = 0;                 // delay: samples added so this track lines up with the slowest track
+    std::vector<int> inputs; int parallelFrom = -1; bool isSource = false;      // routing: the plan tracks mixed into this bus, the track a parallel channel hears, and whether this track is heard by one
     int compKey = -1, gateKey = -1; bool isKey = false;      // side-chain: the plan tracks whose sound the compressor / gate listen to, and whether this track is anyone's key
     int sendExtra[kSends] {};                 // extra delay on a send tap so every track's tap still arrives together at the return
 };
@@ -194,7 +195,7 @@ public:
     void prepare (double sampleRate, int maxBlockSize, int numWorkers)
     {
         sr = sampleRate; maxBlock = maxBlockSize;
-        for (auto& t : tw) { t = std::make_unique<TrackWork>(); t->buf.setSize (2, maxBlock); t->pre.setSize (2, maxBlock); t->scratch.setSize (16, maxBlock); t->midi.ensureSize (32768); t->scratchMidi.ensureSize (32768); t->post.prepare(); t->preDelay.prepare(); t->keyOut.setSize (2, maxBlock); t->keyOut.clear(); for (auto& s : t->sendOut) s.reset(); }
+        for (auto& t : tw) { t = std::make_unique<TrackWork>(); t->buf.setSize (2, maxBlock); t->pre.setSize (2, maxBlock); t->scratch.setSize (16, maxBlock); t->midi.ensureSize (32768); t->scratchMidi.ensureSize (32768); t->post.prepare(); t->preDelay.prepare(); t->keyOut.setSize (2, maxBlock); t->keyOut.clear(); t->srcOut.setSize (2, maxBlock); t->srcOut.clear(); for (auto& s : t->sendOut) s.reset(); }
         for (auto& r : rw) { r = std::make_unique<ReturnWork>(); r->buf.setSize (2, maxBlock); r->scratch.setSize (16, maxBlock); r->out.prepare(); }
         mix.setSize (2, maxBlock); mscratch.setSize (16, maxBlock); dryMix.prepare(); masterKeyBuf.setSize (2, maxBlock); masterKeyLine.prepare();
         pool.start (numWorkers);
@@ -254,7 +255,7 @@ private:
 
     struct TrackWork
     {
-        juce::AudioBuffer<float> buf, pre, scratch, keyOut; juce::MidiBuffer midi, scratchMidi;
+        juce::AudioBuffer<float> buf, pre, scratch, keyOut, srcOut; juce::MidiBuffer midi, scratchMidi;
         StereoDelay post, preDelay;
         std::unique_ptr<juce::AudioBuffer<float>> sendOut[kSends];
         std::unique_ptr<StereoDelay> sendDelay[kSends];
@@ -316,6 +317,9 @@ private:
         }
         w.midi.clear();
         tp.ts->sourceProc->processBlock (buf, w.midi);
+        // ROUTING: a bus takes in the tracks sent to it (already rendered, after their faders, lined up with each other); a parallel channel takes in its source track's sound
+        for (int c : tp.inputs) { const auto& from = tw[(size_t) P.tracks[(size_t) c].index]->buf; for (int ch = 0; ch < 2; ++ch) juce::FloatVectorOperations::add (buf.getWritePointer (ch), from.getReadPointer (ch), n); }
+        if (tp.parallelFrom >= 0) { const auto& from = tw[(size_t) P.tracks[(size_t) tp.parallelFrom].index]->srcOut; for (int ch = 0; ch < 2; ++ch) juce::FloatVectorOperations::add (buf.getWritePointer (ch), from.getReadPointer (ch), n); }
         {   // the channel input stage: automation first (the input gain can be automated), then gain and polarity where the sound enters the effects
             auto& ts = *tp.ts;
             if (ts.blk != nullptr && ts.blk->playing && ts.blk->numSegs > 0)
@@ -329,6 +333,7 @@ private:
             {
                 if (k == tp.inputAt)
                 {
+                    if (tp.isSource) for (int c = 0; c < 2; ++c) juce::FloatVectorOperations::copy (w.srcOut.getWritePointer (c), buf.getReadPointer (c), n);
                     ts.inputStage.process (buf, n, inDb, inInv, sr);
                     const juce::AudioBuffer<float>* cKey = tp.compKey >= 0 ? &tw[(size_t) P.tracks[(size_t) tp.compKey].index]->keyOut : nullptr;
                     const juce::AudioBuffer<float>* gKey = tp.gateKey >= 0 ? &tw[(size_t) P.tracks[(size_t) tp.gateKey].index]->keyOut : nullptr;

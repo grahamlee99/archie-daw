@@ -783,6 +783,9 @@ struct TrackState
     std::atomic<bool> compOn { false }, compFast { false }, compPeak { true }; std::atomic<float> compThr { -18.0f }, compRatio { 4.0f }, compRel { 0.3f }, compMakeup { 0.0f };     // the channel compressor
     // SIDE-CHAIN KEYS: a track has a number of its own (uid) that moves with it; compKey / gateKey name the track whose sound the compressor / gate listens to instead of its own (0 = its own)
     std::atomic<int> uid { 0 }, compKey { 0 }, gateKey { 0 };
+    // ROUTING: outTo = the uid of the BUS channel this track's sound goes to (0 = the master). A bus is a track of kind 2: what is routed to it is mixed into it, before its own effects and fader.
+    // parallelFrom = the uid of the track this PARALLEL channel hears (that track's sound just after its instrument, before its channel processing), so it can be treated differently and mixed beside it.
+    std::atomic<int> outTo { 0 }, parallelFrom { 0 };
     std::atomic<float> compGr { 0.0f };                                                    // the most gain reduction (dB) since the page last asked: the Mixer's meter
     CompStage compStage;
     std::atomic<float> width { 1.0f }; WidthStage widthStage;                              // the channel's stereo width (0 mono, 1 unchanged, 2 twice as wide)

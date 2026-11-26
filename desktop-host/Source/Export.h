@@ -70,7 +70,7 @@ private:
     void timerCallback() override
     {
         if (! loaded) return;
-        if (! muteApplied) { muteApplied = true; if (only >= 0) for (int i = 0; i < copy->trackCount.load(); ++i) if (auto* tt = copy->trackAt (i)) { tt->mute.store (i != only ? true : false); tt->solo.store (false); } }   // a bounce: only this track is heard (with its sends, folder and the master)
+        if (! muteApplied) { muteApplied = true; if (only >= 0) for (int i = 0; i < copy->trackCount.load(); ++i) if (auto* tt = copy->trackAt (i)) { tt->mute.store (i != only && ! copy->isBusOf (i, only) ? true : false); tt->solo.store (false); } }   // a bounce: only this track is heard (with its sends, folder and the master)
         copy->applyWarpResults();
         if (copy->warpBusy()) { emit (status ("preparing the stretched sounds...", 0.02)); return; }
         stopTimer();

@@ -369,7 +369,7 @@ public:
         auto& t = *tracks[(size_t) n];
         t.name = "Track " + juce::String (n + 1); t.kind.store (0); t.inChan.store (0); t.inStereo.store (true); t.monitor.store (true); t.source.store (0); t.gainDb.store (0.0f); t.pan.store (0.0f);
         clearSends (t);
-        t.uid.store (nextUid.fetch_add (1)); t.compKey.store (0); t.gateKey.store (0);
+        t.uid.store (nextUid.fetch_add (1)); t.compKey.store (0); t.gateKey.store (0); t.outTo.store (0); t.parallelFrom.store (0);
         t.mute.store (false); t.solo.store (false); t.armed.store (false); t.arrSnap.publish (emptyArrangement()); t.fileSnap.publish (std::make_unique<FileAudio>()); t.filePath = {};
         t.colour.store (kAutoColours[n % (int) (sizeof (kAutoColours) / sizeof (kAutoColours[0]))]);                  // every track has a colour of its own from the start
         ensureTrackNodes (n);
@@ -472,7 +472,21 @@ public:
     {
         bool any = false;
         for (auto& t : tracks) any = any || t->solo.load();
-        for (auto& t : tracks) { t->effMute.store (t->mute.load() || (any && ! t->solo.load())); t->soloGate.store (any && ! t->solo.load()); }
+        // with routing, soloing a track keeps the buses it goes through open, and soloing a bus (or a track with a parallel channel) keeps what feeds it audible
+        const int n = trackCount.load();
+        auto byUid = [this, n] (int u) { if (u > 0) for (int i = 0; i < n; ++i) if (tracks[(size_t) i]->uid.load() == u) return i; return -1; };
+        std::vector<char> open (tracks.size(), 0);
+        for (int i = 0; i < n; ++i) if (tracks[(size_t) i]->solo.load())
+        {
+            open[(size_t) i] = 1;
+            for (int j = byUid (tracks[(size_t) i]->outTo.load()), hops = 0; j >= 0 && hops < n; j = byUid (tracks[(size_t) j]->outTo.load()), ++hops) open[(size_t) j] = 1;      // up: its buses
+        }
+        for (int i = 0; i < n; ++i)
+        {
+            for (int j = byUid (tracks[(size_t) i]->outTo.load()), hops = 0; j >= 0 && hops < n; j = byUid (tracks[(size_t) j]->outTo.load()), ++hops) if (tracks[(size_t) j]->solo.load()) open[(size_t) i] = 1;      // down: under a soloed bus
+            const int from = byUid (tracks[(size_t) i]->parallelFrom.load()); if (from >= 0 && tracks[(size_t) from]->solo.load()) { open[(size_t) i] = 1; for (int j = byUid (tracks[(size_t) i]->outTo.load()), hops = 0; j >= 0 && hops < n; j = byUid (tracks[(size_t) j]->outTo.load()), ++hops) open[(size_t) j] = 1; }
+        }
+        for (size_t i = 0; i < tracks.size(); ++i) { auto& t = *tracks[i]; const bool shut = any && ! open[i]; t.effMute.store (t.mute.load() || shut); t.soloGate.store (shut); }
         for (auto& r : returns) r->effMute.store (r->mute.load());
     }
 
@@ -1653,6 +1667,7 @@ public:
         if (key == "gateRange") return (double) t.gateRange.load();
         if (key == "gateRel") return (double) t.gateRel.load();
         if (key == "gateHold") return (double) t.gateHold.load();
+        if (key == "outTo") return t.outTo.load();
         if (key == "compKey") return t.compKey.load();
         if (key == "gateKey") return t.gateKey.load();
         if (key == "compOn") return t.compOn.load();
@@ -1676,7 +1691,8 @@ public:
     bool applyTrackParam (TrackState& t, const juce::String& key, const juce::var& v)
     {
         if (key == "source") t.source.store (juce::jlimit (0, 6, (int) v));
-        else if (key == "kind") t.kind.store (juce::jlimit (0, 1, (int) v));
+        else if (key == "kind") { t.kind.store (juce::jlimit (0, 1, (int) v)); publishPlan(); }      // (a bus is made with Add Mix Channel, not by changing a type)
+        else if (key == "outTo") { const int to = juce::jmax (0, (int) v); if (to != 0 && ! canRouteTo (t, to)) return false; t.outTo.store (to); publishPlan(); updateSolo(); }
         else if (key == "inChan") t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) v));
         else if (key == "inStereo") t.inStereo.store ((bool) v);
         else if (key == "monitor") t.monitor.store ((bool) v);
@@ -1728,7 +1744,7 @@ public:
         if (transport.recording.load() && (key == "gainDb" || key == "pan" || key == "inGainDb")) autoRecFromControl (chain, key, (double) after);
         if (key == "armed" || before == after) return true;
         const bool dragged = key == "gainDb" || key == "pan" || key == "inGainDb" || key == "eqHpHz" || key == "eqLpHz" || key == "compThr" || key == "compRatio" || key == "compRel" || key == "compMakeup" || key == "gateThr" || key == "gateRange" || key == "gateRel" || key == "gateHold" || key == "width";
-        const juce::String what = key == "gainDb" ? "level" : key == "source" ? "sound source" : key == "inGainDb" ? "input gain" : key == "inInvert" ? "input polarity" : key == "groove" ? "groove channel" : key == "compKey" ? "compressor side-chain" : key == "gateKey" ? "gate side-chain" : key == "width" ? "stereo width" : key == "gateOn" ? "gate switch" : key == "gateExp" ? "gate mode" : key == "gateFast" ? "gate attack" : key == "gateThr" ? "gate threshold" : key == "gateRange" ? "gate range" : key == "gateRel" ? "gate release" : key == "gateHold" ? "gate hold" : key == "compOn" ? "compressor switch" : key == "compFast" ? "compressor attack" : key == "compPeak" ? "compressor detector" : key == "compThr" ? "compressor threshold" : key == "compRatio" ? "compressor ratio" : key == "compRel" ? "compressor release" : key == "compMakeup" ? "compressor make-up" : key == "eqHpOn" ? "high-pass switch" : key == "eqHpHz" ? "high-pass frequency" : key == "eqLpOn" ? "low-pass switch" : key == "eqLpHz" ? "low-pass frequency" : key;
+        const juce::String what = key == "gainDb" ? "level" : key == "source" ? "sound source" : key == "inGainDb" ? "input gain" : key == "inInvert" ? "input polarity" : key == "groove" ? "groove channel" : key == "outTo" ? "output" : key == "compKey" ? "compressor side-chain" : key == "gateKey" ? "gate side-chain" : key == "width" ? "stereo width" : key == "gateOn" ? "gate switch" : key == "gateExp" ? "gate mode" : key == "gateFast" ? "gate attack" : key == "gateThr" ? "gate threshold" : key == "gateRange" ? "gate range" : key == "gateRel" ? "gate release" : key == "gateHold" ? "gate hold" : key == "compOn" ? "compressor switch" : key == "compFast" ? "compressor attack" : key == "compPeak" ? "compressor detector" : key == "compThr" ? "compressor threshold" : key == "compRatio" ? "compressor ratio" : key == "compRel" ? "compressor release" : key == "compMakeup" ? "compressor make-up" : key == "eqHpOn" ? "high-pass switch" : key == "eqHpHz" ? "high-pass frequency" : key == "eqLpOn" ? "low-pass switch" : key == "eqLpHz" ? "low-pass frequency" : key;
         undo.record ((t->name + " " + what).toStdString(), dragged ? ("p:" + juce::String (chain) + ":" + key).toStdString() : std::string(),
                      [this, chain, key, before] { if (auto* x = chainAt (chain)) applyTrackParam (*x, key, before); },
                      [this, chain, key, after]  { if (auto* x = chainAt (chain)) applyTrackParam (*x, key, after); });
@@ -2351,7 +2367,7 @@ public:
     struct PlugSnap { juce::PluginDescription desc; juce::String state; bool bypass = false; bool internal = false; };
     struct TrackSnap
     {
-        juce::String name, filePath; int colour = -1; int source = 0; int uid = 0, compKey = 0, gateKey = 0; float gainDb = 0, pan = 0; bool mute = false, solo = false;
+        juce::String name, filePath; int colour = -1; int source = 0; int uid = 0, compKey = 0, gateKey = 0, outTo = 0, parallelFrom = 0, kind = 0; float gainDb = 0, pan = 0; bool mute = false, solo = false;
         std::shared_ptr<Insts> insts; float sendDb[kSends] {}, sendLvl[kSends] {}; bool sendPre[kSends] {}, sendOn[kSends] {}; std::vector<std::shared_ptr<PlugSnap>> plugs;
     };
     bool snapSlot (int chain, int slot, PlugSnap& out)
@@ -2384,7 +2400,7 @@ public:
         if (! addTrack()) return;
         const int idx = trackCount.load() - 1;
         auto& t = *tracks[(size_t) idx];
-        if (sn->uid > 0) t.uid.store (sn->uid); t.compKey.store (sn->compKey); t.gateKey.store (sn->gateKey);      // it is the same track again: keys that named it find it
+        if (sn->uid > 0) t.uid.store (sn->uid); t.compKey.store (sn->compKey); t.gateKey.store (sn->gateKey); t.outTo.store (sn->outTo); t.parallelFrom.store (sn->parallelFrom); t.kind.store (sn->kind); publishPlan(); updateSolo();      // it is the same track again: keys that named it find it
         t.colour.store (sn->colour); t.name = sn->name; t.source.store (sn->source); t.gainDb.store (sn->gainDb); t.pan.store (sn->pan); t.mute.store (sn->mute); t.solo.store (sn->solo);
         updateSolo();
         if (sn->insts) putArr (idx, sn->insts);
@@ -2394,6 +2410,47 @@ public:
         *next = [this, idx, sn, next, done] (size_t i) { if (i < sn->plugs.size()) restorePlugin (idx, (int) i, sn->plugs[i], [next, i] { (*next) (i + 1); }); else if (done) done(); };
         (*next) (0);
         stateDirty.store (true);
+    }
+    // ---- ROUTING ----
+    bool isBusOf (int bus, int track) const { int j = track; for (int hops = 0; j >= 0 && j < trackCount.load() && hops <= trackCount.load(); ++hops) { j = trackIndexOfUid (tracks[(size_t) j]->outTo.load()); if (j == bus) return true; } return false; }
+    int trackIndexOfUid (int u) const { if (u > 0) for (int i = 0; i < trackCount.load(); ++i) if (tracks[(size_t) i]->uid.load() == u) return i; return -1; }
+    // a track may go to a bus that is not itself and does not already (directly or further on) go back to this track
+    bool canRouteTo (const TrackState& t, int busUid) const
+    {
+        int j = trackIndexOfUid (busUid); if (j < 0 || tracks[(size_t) j]->kind.load() != 2 || busUid == t.uid.load()) return false;
+        for (int hops = 0; j >= 0 && hops <= trackCount.load(); ++hops) { if (tracks[(size_t) j]->uid.load() == t.uid.load()) return false; j = trackIndexOfUid (tracks[(size_t) j]->outTo.load()); }
+        return true;
+    }
+    // a new channel with a role, added at the end; undo removes it and redo makes the very same one again
+    int addRoutedTrack (int kind, const juce::String& name, int outTo, int parallelFrom, int uid = 0)
+    {
+        if (! addTrack()) return -1; const int i = trackCount.load() - 1; auto& t = *tracks[(size_t) i];
+        if (uid > 0) t.uid.store (uid); t.kind.store (kind); t.name = name.substring (0, 40); t.outTo.store (outTo); t.parallelFrom.store (parallelFrom); publishPlan(); updateSolo(); stateDirty.store (true); return i;
+    }
+    juce::String nextBusName() const { int n = 1; for (int i = 0; i < trackCount.load(); ++i) if (tracks[(size_t) i]->kind.load() == 2) ++n; return "Bus " + juce::String (n); }
+    // an empty BUS (mix channel) that other tracks can be routed into
+    int editAddBus()
+    {
+        const auto name = nextBusName(); const int i = addRoutedTrack (2, name, 0, 0); if (i < 0) return -1; const int uid = tracks[(size_t) i]->uid.load();
+        undo.record ("Add mix channel", "", [this] { removeLastTrack(); updateSolo(); }, [this, name, uid] { addRoutedTrack (2, name, 0, 0, uid); }); return i;
+    }
+    // a new bus, with this track routed into it; the bus goes on to where the track went before. One undo step.
+    int editRouteToNewBus (int idx)
+    {
+        auto* t = trackAt (idx); if (t == nullptr || idx >= trackCount.load()) return -1;
+        const auto name = nextBusName(); const int before = t->outTo.load(), who = t->uid.load();
+        const int i = addRoutedTrack (2, name, before, 0); if (i < 0) return -1; const int uid = tracks[(size_t) i]->uid.load();
+        auto point = [this] (int trackUid, int to) { const int j = trackIndexOfUid (trackUid); if (j >= 0) { tracks[(size_t) j]->outTo.store (to); publishPlan(); updateSolo(); stateDirty.store (true); } };
+        point (who, uid);
+        undo.record ("Route to new bus", "", [this, point, who, before] { point (who, before); removeLastTrack(); updateSolo(); }, [this, point, name, before, uid, who] { addRoutedTrack (2, name, before, 0, uid); point (who, uid); }); return i;
+    }
+    // a PARALLEL channel beside this track: it hears the same instrument or input, has its own effects, EQ, dynamics and fader, and goes where the track goes
+    int editParallelChannel (int idx)
+    {
+        auto* t = trackAt (idx); if (t == nullptr || idx >= trackCount.load()) return -1;
+        const auto name = (t->name + " parallel").substring (0, 40); const int to = t->outTo.load(), from = t->uid.load();
+        const int i = addRoutedTrack (0, name, to, from); if (i < 0) return -1; const int uid = tracks[(size_t) i]->uid.load();
+        undo.record ("Create parallel channel", "", [this] { removeLastTrack(); updateSolo(); }, [this, name, to, from, uid] { addRoutedTrack (0, name, to, from, uid); }); return i;
     }
     bool editAddTrack()
     {
@@ -2428,7 +2485,7 @@ public:
         if (idx >= n) return false;
         auto& t = *tracks[(size_t) idx];
         auto sn = std::make_shared<TrackSnap>();
-        sn->uid = t.uid.load(); sn->compKey = t.compKey.load(); sn->gateKey = t.gateKey.load();
+        sn->uid = t.uid.load(); sn->compKey = t.compKey.load(); sn->gateKey = t.gateKey.load(); sn->outTo = t.outTo.load(); sn->parallelFrom = t.parallelFrom.load(); sn->kind = t.kind.load();
         sn->colour = t.colour.load(); sn->name = t.name; sn->filePath = t.filePath; sn->source = t.source.load(); sn->gainDb = t.gainDb.load(); sn->pan = t.pan.load(); sn->mute = t.mute.load(); sn->solo = t.solo.load();
         sn->insts = instsOf (t);
         for (int s = 0; s < kSends; ++s) { sn->sendDb[s] = t.sendDb[s].load(); sn->sendLvl[s] = t.sendLvl[s].load(); sn->sendOn[s] = t.sendOn[s].load(); sn->sendPre[s] = t.sendPre[s].load(); }
@@ -2994,7 +3051,7 @@ public:
             auto& t = *tracks[(size_t) ti];
             auto* o = new juce::DynamicObject();
             o->setProperty ("index", t.index); o->setProperty ("name", t.name); o->setProperty ("colour", t.colour.load()); o->setProperty ("latency", chainLatency (t));
-            o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
+            o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); o->setProperty ("outTo", t.outTo.load()); o->setProperty ("parallelFrom", t.parallelFrom.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
             o->setProperty ("mute", t.mute.load()); o->setProperty ("solo", t.solo.load()); o->setProperty ("armed", t.armed.load());
             o->setProperty ("file", juce::File (t.filePath).getFileName());
             const Clip pc = t.primaryClip();
@@ -3232,7 +3289,7 @@ public:
     juce::var trackVar (int ti)
     {
             auto& t = *tracks[(size_t) ti]; auto* o = new juce::DynamicObject();
-            o->setProperty ("name", t.name); o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
+            o->setProperty ("name", t.name); o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); o->setProperty ("outTo", t.outTo.load()); o->setProperty ("parallelFrom", t.parallelFrom.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
             o->setProperty ("mute", t.mute.load()); o->setProperty ("solo", t.solo.load()); o->setProperty ("armed", t.armed.load());
             o->setProperty ("colour", t.colour.load()); o->setProperty ("automation", autoVar (t.index)); o->setProperty ("remotes", remotesVar (t.index));
             o->setProperty ("filePath", t.filePath); o->setProperty ("clip", clipToVar (t)); o->setProperty ("arrangement", arrangementVar (t));
@@ -3258,7 +3315,7 @@ public:
         if (! addTrack()) return -1;
         const int i = trackCount.load() - 1; auto& t = *tracks[(size_t) i];
         t.colour.store (juce::jlimit (-1, kPaletteSize - 1, (int) tv.getProperty ("colour", -1)));
-        t.name = newName.isNotEmpty() ? newName : tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 1, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
+        t.name = newName.isNotEmpty() ? newName : tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
         t.gainDb.store ((float) (double) tv.getProperty ("gainDb", 0.0)); t.pan.store ((float) (double) tv.getProperty ("pan", 0.0));
         t.mute.store ((bool) tv.getProperty ("mute", false)); t.solo.store (false); t.armed.store (false);
         std::map<int, std::shared_ptr<Clip>> knownContent;
@@ -3381,7 +3438,7 @@ public:
         std::map<int, std::shared_ptr<Clip>> knownContent;
         auto pending = std::make_shared<int> (0);
         auto errors = std::make_shared<juce::StringArray>();
-        auto finish = [this, pending, errors, done] { if (--(*pending) == 0) { for (auto& w : loadWarnings) errors->add (w); undo.clear(); stateDirty.store (true); done (errors->joinIntoString ("; ")); } };
+        auto finish = [this, pending, errors, done] { if (--(*pending) == 0) { for (auto& w : loadWarnings) errors->add (w); publishPlan(); updateSolo();   /* routing and side-chain keys read from the song take effect even when nothing else changes the mixer */ undo.clear(); stateDirty.store (true); done (errors->joinIntoString ("; ")); } };
         ++(*pending);   // guard so we do not finish before everything has been queued
         {   // the project's own number of tracks
             const int want = juce::jlimit (0, kTracks, p.getProperty ("tracks", {}).getArray() != nullptr ? p.getProperty ("tracks", {}).getArray()->size() : kStartTracks);
@@ -3395,7 +3452,7 @@ public:
             {
                 const auto& tv = (*arr)[i]; auto& t = *tracks[(size_t) i];
                 { t.colour.store (juce::jlimit (-1, kPaletteSize - 1, (int) tv.getProperty ("colour", -1))); }
-                t.name = tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 1, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); { const int u = (int) tv.getProperty ("uid", 0); if (u > 0) { t.uid.store (u); if (u >= nextUid.load()) nextUid.store (u + 1); } else t.uid.store (nextUid.fetch_add (1)); } t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
+                t.name = tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); { const int u = (int) tv.getProperty ("uid", 0); if (u > 0) { t.uid.store (u); if (u >= nextUid.load()) nextUid.store (u + 1); } else t.uid.store (nextUid.fetch_add (1)); } t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
                 t.gainDb.store ((float) (double) tv.getProperty ("gainDb", 0.0)); t.pan.store ((float) (double) tv.getProperty ("pan", 0.0));
                 t.mute.store ((bool) tv.getProperty ("mute", false)); t.solo.store ((bool) tv.getProperty ("solo", false)); t.armed.store ((bool) tv.getProperty ("armed", false));
                 if (tv.getProperty ("automation", {}).isArray()) loadAutoVar (i, tv.getProperty ("automation", {})); loadRemotesVar (i, tv.getProperty ("remotes", {}));
@@ -3501,17 +3558,37 @@ private:
             lat.push_back (chainLatency (t));
             plan->tracks.push_back (std::move (tp));
         }
-        // every track goes straight to the master mix: all are delayed to line up with the slowest one
-        int rootMax = 0;
-        for (size_t i = 0; i < plan->tracks.size(); ++i) { plan->rootTracks.push_back ((int) i); rootMax = juce::jmax (rootMax, lat[i]); }
-        for (int ti : plan->rootTracks) plan->tracks[(size_t) ti].delay = rootMax - lat[(size_t) ti];
-        int tapMax = 0;                                                  // sends leave a track after its inserts: their taps are lined up with each other the same way
-        for (auto& tp : plan->tracks) { bool any = false; for (int s = 0; s < kSends; ++s) any = any || tp.sends[s].proc != nullptr; if (any) tapMax = juce::jmax (tapMax, rootMax); }
-        for (size_t i = 0; i < plan->tracks.size(); ++i)
+        // ROUTING AND SIDE-CHAINS decide the order: a track is rendered after everything it takes sound from (tracks routed into it, the track a parallel channel hears, its keys).
+        const int nT = (int) plan->tracks.size();
+        auto find = [&plan, nT] (int u) { if (u > 0) for (int i = 0; i < nT; ++i) if (plan->tracks[(size_t) i].ts->uid.load() == u) return i; return -1; };
+        std::vector<std::vector<int>> needs ((size_t) nT); std::vector<int> out ((size_t) nT, -1);      // out: the bus a track goes to (-1 = the master)
+        std::function<bool (int, int, std::vector<char>&)> waitsFor = [&] (int i, int j, std::vector<char>& seen) -> bool { if (i == j) return true; if (seen[(size_t) i]) return false; seen[(size_t) i] = 1; for (int d : needs[(size_t) i]) if (waitsFor (d, j, seen)) return true; return false; };
+        auto link = [&] (int later, int earlier) { if (later < 0 || earlier < 0 || later == earlier) return false; std::vector<char> seen ((size_t) nT, 0); if (waitsFor (earlier, later, seen)) return false; needs[(size_t) later].push_back (earlier); return true; };      // a link that would go round in a circle is refused
+        for (int i = 0; i < nT; ++i) { const int to = find (plan->tracks[(size_t) i].ts->outTo.load()); if (to >= 0 && plan->tracks[(size_t) to].ts->kind.load() == 2 && link (to, i)) { out[(size_t) i] = to; plan->tracks[(size_t) to].inputs.push_back (i); } }
+        for (int i = 0; i < nT; ++i) { const int from = find (plan->tracks[(size_t) i].ts->parallelFrom.load()); if (from >= 0 && link (i, from)) { plan->tracks[(size_t) i].parallelFrom = from; plan->tracks[(size_t) from].isSource = true; } }
+        for (int i = 0; i < nT; ++i) { auto& tp = plan->tracks[(size_t) i]; const int ck = find (tp.ts->compKey.load()), gk = find (tp.ts->gateKey.load()); if (link (i, ck) || (ck >= 0 && ck != i && std::find (needs[(size_t) i].begin(), needs[(size_t) i].end(), ck) != needs[(size_t) i].end())) tp.compKey = ck; if (link (i, gk) || (gk >= 0 && gk != i && std::find (needs[(size_t) i].begin(), needs[(size_t) i].end(), gk) != needs[(size_t) i].end())) tp.gateKey = gk; if (tp.compKey >= 0) plan->tracks[(size_t) tp.compKey].isKey = true; if (tp.gateKey >= 0) plan->tracks[(size_t) tp.gateKey].isKey = true; }
+        std::vector<int> depth ((size_t) nT, -1);
+        std::function<int (int)> deep = [&] (int i) -> int { if (depth[(size_t) i] >= 0) return depth[(size_t) i]; int d = 0; for (int k : needs[(size_t) i]) d = juce::jmax (d, 1 + deep (k)); return depth[(size_t) i] = d; };
+        for (int i = 0; i < nT; ++i) deep (i);
+        for (int i = 0; i < nT; ++i) { if ((int) plan->levels.size() <= depth[(size_t) i]) plan->levels.resize ((size_t) depth[(size_t) i] + 1); plan->levels[(size_t) depth[(size_t) i]].push_back (i); }
+        // PLUG-IN DELAY along the routes: what arrives at a track is as late as its latest input, and its own effects add to that. Every input of a bus, and everything going to the master, is delayed to match the latest.
+        std::vector<int> base ((size_t) nT, 0), end ((size_t) nT, 0);
+        for (const auto& level : plan->levels) for (int i : level)
         {
-            auto& tp = plan->tracks[i];
+            const auto& tp = plan->tracks[(size_t) i]; int in = 0; for (int c : tp.inputs) in = juce::jmax (in, end[(size_t) c]);
+            if (tp.parallelFrom >= 0) { const auto& src = plan->tracks[(size_t) tp.parallelFrom]; int pre = 0; for (size_t k = 0; k < src.inputAt && k < src.inserts.size(); ++k) pre += juce::jmax (0, src.inserts[k].proc->getLatencySamples()); in = juce::jmax (in, base[(size_t) tp.parallelFrom] + pre); }
+            base[(size_t) i] = in; end[(size_t) i] = in + lat[(size_t) i];
+        }
+        int rootMax = 0;
+        for (int i = 0; i < nT; ++i) if (out[(size_t) i] < 0) { plan->rootTracks.push_back (i); rootMax = juce::jmax (rootMax, end[(size_t) i]); }
+        for (int i = 0; i < nT; ++i) plan->tracks[(size_t) i].delay = (out[(size_t) i] < 0 ? rootMax : base[(size_t) out[(size_t) i]]) - end[(size_t) i];
+        int tapMax = 0;                                                  // sends leave a track after its fader and delay: their taps are lined up with each other the same way
+        for (int i = 0; i < nT; ++i) for (int s = 0; s < kSends; ++s) if (plan->tracks[(size_t) i].sends[s].proc != nullptr) tapMax = juce::jmax (tapMax, rootMax);
+        for (int i = 0; i < nT; ++i)
+        {
+            auto& tp = plan->tracks[(size_t) i];
             for (int s = 0; s < kSends; ++s)
-                if (tp.sends[s].proc != nullptr) { tp.sendExtra[s] = tapMax - rootMax; if (tp.sendExtra[s] > 0) renderer.ensureSendDelay (tp.index, s); }
+                if (tp.sends[s].proc != nullptr) { tp.sendExtra[s] = tapMax - (end[(size_t) i] + tp.delay); if (tp.sendExtra[s] > 0) renderer.ensureSendDelay (tp.index, s); }
         }
         int retMax = 0; std::array<int, kReturns> retLat {};
         for (int r = 0; r < kReturns; ++r)
@@ -3530,23 +3607,8 @@ private:
         plan->masterChain = chainRefs (*masterChain); plan->master = master;
         plan->trackLatency = rootMax; plan->returnLatency = retMax; plan->masterLatency = chainLatency (*masterChain);
         plan->totalLatency = Z + plan->masterLatency;
-        {   // SIDE-CHAIN: find each key's track by its number, then group the tracks so a key is rendered before whoever listens to it. Two tracks keying each other in a circle cannot be ordered: that key is left out.
-            const int nT = (int) plan->tracks.size();
-            auto find = [&plan, nT] (int u) { if (u > 0) for (int i = 0; i < nT; ++i) if (plan->tracks[(size_t) i].ts->uid.load() == u) return i; return -1; };
-            for (int i = 0; i < nT; ++i) { auto& tp = plan->tracks[(size_t) i]; tp.compKey = find (tp.ts->compKey.load()); tp.gateKey = find (tp.ts->gateKey.load()); if (tp.compKey == i) tp.compKey = -1; if (tp.gateKey == i) tp.gateKey = -1; }
-            std::vector<int> depth ((size_t) nT, -1), visiting ((size_t) nT, 0);
-            std::function<int (int)> deep = [&] (int i) -> int
-            {
-                if (depth[(size_t) i] >= 0) return depth[(size_t) i]; visiting[(size_t) i] = 1; int d = 0; auto& tp = plan->tracks[(size_t) i];
-                for (int* k : { &tp.compKey, &tp.gateKey }) if (*k >= 0) { if (visiting[(size_t) *k]) *k = -1; else d = juce::jmax (d, 1 + deep (*k)); }
-                visiting[(size_t) i] = 0; return depth[(size_t) i] = d;
-            };
-            for (int i = 0; i < nT; ++i) deep (i);
-            for (int i = 0; i < nT; ++i) { if ((int) plan->levels.size() <= depth[(size_t) i]) plan->levels.resize ((size_t) depth[(size_t) i] + 1); plan->levels[(size_t) depth[(size_t) i]].push_back (i); }
-            for (auto& tp : plan->tracks) for (int k : { tp.compKey, tp.gateKey }) if (k >= 0) plan->tracks[(size_t) k].isKey = true;
-            plan->masterKey = master != nullptr ? find (master->cKey.load()) : -1;
-            if (plan->masterKey >= 0) { plan->tracks[(size_t) plan->masterKey].isKey = true; plan->masterKeyDelay = plan->tracks[(size_t) plan->masterKey].delay + plan->dryMixDelay; }
-        }
+        plan->masterKey = master != nullptr ? find (master->cKey.load()) : -1;
+        if (plan->masterKey >= 0) { plan->tracks[(size_t) plan->masterKey].isKey = true; plan->masterKeyDelay = juce::jmax (0, rootMax - end[(size_t) plan->masterKey]) + plan->dryMixDelay; }
         pdcTotal.store (plan->totalLatency);
         latencySignature = signatureOf (*plan);
         renderer.publish (std::move (plan));

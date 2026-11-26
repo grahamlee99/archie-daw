@@ -3135,6 +3135,55 @@ int main()
         CHECK (gs.ch[1].preAlign && gs.ch[1].useGlobal && std::abs (gs.globalShuffle - 45.0f) < 1e-4f, "and are saved with the song");
     }
 
+    // ROUTING: mix channels (buses), parallel channels, solo and latency along the routes
+    {
+        auto peak = [&] (HostEngine& e) { run (e, 200, bs); auto o = run (e, 60, bs); float pk = 0; for (float v : o) pk = std::max (pk, std::abs (v)); return pk; };
+        auto set = [] (HostEngine& e, int track, const char* key, juce::var v) { return e.editChainParam (track, key, v); };
+        HostEngine e; e.prepareOffline (sr, bs, 0); e.undo.clock = [] { static double c = 0; c += 5000; return c; };
+        for (int i = 0; i < 3; ++i) e.trackAt (i)->source.store (2);             // three 0.25 tones, started together so they add in step
+        e.editChainParam (1, "mute", true); e.editChainParam (2, "mute", true);
+        const int bus = e.editAddBus(); const int busUid = e.trackAt (bus)->uid.load();
+        CHECK (bus == 4 && e.trackAt (bus)->kind.load() == 2 && e.trackAt (bus)->name == "Bus 1", "Add Mix Channel makes a bus");
+        CHECK (std::abs (peak (e) - 0.25f) < 0.002f, "a track goes to the master until it is routed");
+        CHECK (set (e, 0, "outTo", busUid), "and can be routed to the bus");
+        CHECK (std::abs (peak (e) - 0.25f) < 0.002f, "through the bus it sounds the same");
+        set (e, bus, "gainDb", -6.0206); CHECK (std::abs (peak (e) - 0.125f) < 0.002f, "the bus fader sets the level of what is routed into it");
+        set (e, bus, "mute", true); CHECK (peak (e) < 0.001f, "muting the bus mutes it"); set (e, bus, "mute", false); set (e, bus, "gainDb", 0.0);
+        set (e, 1, "mute", false); set (e, 1, "outTo", busUid); CHECK (std::abs (peak (e) - 0.5f) < 0.004f, "two tracks add together in the bus");
+        set (e, 2, "mute", false);                                                // a third tone straight to the master
+        set (e, 0, "solo", true); CHECK (std::abs (peak (e) - 0.25f) < 0.004f, "soloing a track keeps its bus open and nothing else"); set (e, 0, "solo", false);
+        set (e, bus, "solo", true); CHECK (std::abs (peak (e) - 0.5f) < 0.004f, "soloing a bus plays everything routed into it"); set (e, bus, "solo", false);
+        set (e, 2, "mute", true); set (e, 1, "mute", true);
+        // buses into buses, and no circles
+        const int bus2 = e.editAddBus(); const int u2 = e.trackAt (bus2)->uid.load();
+        CHECK (set (e, bus, "outTo", u2) && std::abs (peak (e) - 0.25f) < 0.002f, "a bus can go into another bus");
+        CHECK (! set (e, bus2, "outTo", busUid) && ! set (e, bus, "outTo", busUid) && ! set (e, 0, "outTo", e.trackAt (1)->uid.load()), "a circle, itself, and a track that is not a bus are refused");
+        set (e, bus2, "gainDb", -6.0206); CHECK (std::abs (peak (e) - 0.125f) < 0.002f, "and the second bus's fader applies to the whole chain");
+        auto song = e.saveProject(); HostEngine g; g.prepareOffline (sr, bs, 0); g.loadProject (song, [] (juce::String) {});
+        CHECK (g.trackAt (0)->outTo.load() == busUid && g.trackAt (bus)->kind.load() == 2 && std::abs (peak (g) - 0.125f) < 0.002f, "the routing is saved with the song");
+        e.editRemoveTrack (bus2); CHECK (std::abs (peak (e) - 0.25f) < 0.002f, "removing a bus sends what fed it to the master");
+        e.undo.undo(); for (int i = 0; i < 50; ++i) e.service(); CHECK (e.trackIndexOfUid (u2) >= 0 && std::abs (peak (e) - 0.125f) < 0.002f, "undo brings the bus and its routing back");
+    }
+    {
+        auto peak = [&] (HostEngine& e) { run (e, 200, bs); auto o = run (e, 60, bs); float pk = 0; for (float v : o) pk = std::max (pk, std::abs (v)); return pk; };
+        HostEngine e; e.prepareOffline (sr, bs, 0); e.undo.clock = [] { static double c = 0; c += 5000; return c; }; e.trackAt (0)->source.store (2); e.trackAt (0)->name = "Drums";
+        const int nb = e.editRouteToNewBus (0); CHECK (nb == 4 && e.trackAt (0)->outTo.load() == e.trackAt (nb)->uid.load() && std::abs (peak (e) - 0.25f) < 0.002f, "Route to New Output Bus makes the bus and routes the track, in one step");
+        e.undo.undo(); CHECK (e.trackCount.load() == 4 && e.trackAt (0)->outTo.load() == 0, "one undo takes both back"); e.undo.redo(); CHECK (e.trackCount.load() == 5 && e.trackAt (0)->outTo.load() == e.trackAt (4)->uid.load(), "and redo restores them");
+        const int p = e.editParallelChannel (0); CHECK (p == 5 && e.trackAt (p)->name == "Drums parallel" && e.trackAt (p)->outTo.load() == e.trackAt (0)->outTo.load(), "a parallel channel goes where its track goes");
+        CHECK (std::abs (peak (e) - 0.5f) < 0.004f, "it hears the same sound and adds beside it");
+        e.editChainParam (0, "gainDb", -90.0); CHECK (std::abs (peak (e) - 0.25f) < 0.004f, "its level does not depend on the first channel's fader");
+        e.editChainParam (p, "gainDb", -6.0206); CHECK (std::abs (peak (e) - 0.125f) < 0.004f, "and it has a fader of its own"); e.editChainParam (0, "gainDb", 0.0); e.editChainParam (p, "gainDb", 0.0);
+        e.editChainParam (0, "solo", true); CHECK (std::abs (peak (e) - 0.5f) < 0.004f, "soloing a track keeps its parallel channel with it");
+    }
+    {   // latency: a plug-in's delay on one routed track is made up on the others and on the track beside the bus
+        HostEngine e; e.prepareOffline (sr, bs, 0);
+        e.addProcessor (0, std::make_unique<LatProc> (2, 2, 100), "late"); const int bus = e.editAddBus(); const int u = e.trackAt (bus)->uid.load();
+        e.editChainParam (0, "outTo", u); e.editChainParam (1, "outTo", u); e.addProcessor (bus, std::make_unique<LatProc> (2, 2, 50), "later");
+        const auto* plan = e.planNow();
+        CHECK (plan->tracks[0].delay == 0 && plan->tracks[1].delay == 100, "inside a bus every input lines up with the slowest");
+        CHECK (plan->tracks[(size_t) bus].delay == 0 && plan->tracks[2].delay == 150 && plan->trackLatency == 150, "and a track outside lines up with the whole bus path");
+    }
+
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

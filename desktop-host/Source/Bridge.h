@@ -228,6 +228,9 @@ private:
             if (! engine.editChainParam (ti, p.getProperty ("key", {}).toString(), p.getProperty ("value", {}))) return fail ("unknown track setting");
             return ok();
         }
+        if (cmd == "addBus")          { if (engine.editAddBus() < 0) return fail ("that is the most tracks there can be (" + juce::String (kTracks) + ")"); return ok(); }
+        if (cmd == "routeToNewBus")   { if (engine.editRouteToNewBus (inum (p, "track", -1)) < 0) return fail ("choose a track, and leave room for one more"); return ok(); }
+        if (cmd == "parallelChannel") { if (engine.editParallelChannel (inum (p, "track", -1)) < 0) return fail ("choose a track, and leave room for one more"); return ok(); }
         if (cmd == "addTrack")    { if (! engine.editAddTrack()) return fail ("that is the most tracks there can be (" + juce::String (kTracks) + ")"); return ok(); }
         if (cmd == "removeTrack") { if (! engine.editRemoveTrack (inum (p, "track", -1))) return fail ("that track cannot be removed"); return ok(); }
         if (cmd == "swing") { tr.swing.store (juce::jlimit (0.0, 1.0, num (p, "amount"))); if (p.hasProperty ("grid")) tr.swingGrid.store (num (p, "grid") <= 0.3 ? 0.25 : 0.5); engine.stateDirty.store (true); return ok(); }

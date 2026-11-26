@@ -2,6 +2,20 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.152",
+      "date": "2026-11-26",
+      "title": "Routing: buses, parallel channels and send effects",
+      "notes": [
+        "New: Add Mix Channel makes a bus. Choose it under OUT on any channel in the mixer, and treat several tracks together. Buses can feed other buses.",
+        "New: Route to New Output Bus (Ctrl+G, or right-click a track) makes a bus and routes the selected track into it in one step.",
+        "New: Create Parallel Channel adds a second channel that hears the same instrument or input, with its own effects, dynamics and fader.",
+        "New: Create Send FX puts an effect on a free FX return. Turn up that send on a track to hear it.",
+        "Solo follows the routing, plug-in delay stays lined up through buses, and routing is saved with the song and can be undone.",
+        "Fixed: side-chain keys in a reopened song with no plug-ins now take effect as soon as the song loads.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.151",
       "date": "2026-11-26",
       "title": "Side-chain keys and groove options",

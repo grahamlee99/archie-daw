@@ -367,7 +367,7 @@
       ],
       "command": "ui.routeToNewBus",
       "context": "global",
-      "status": "pending",
+      "status": "ready",
       "note": "Reason: Route to New Output Bus"
     },
     {
