@@ -2,6 +2,18 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.155",
+      "date": "2026-11-26",
+      "title": "Alien Delay: bending freeze, finer times and auto throw",
+      "notes": [
+        "In Archies Alien Delay, Freeze now holds a loop that follows the Time knob like tape: half the time plays twice as fast and an octave up, and every step is heard as a bend.",
+        "Back at the time it was frozen at, the loop plays as it was. While frozen, a change is heard at once, even with On Beat lit.",
+        "New times 1/64 and 1/32, for tighter repeats and higher bends.",
+        "New: Auto Throw, a one-beat throw at the end of the feedback ramp, which then climbs again, or on the last beat of every 1, 2, 4 or 8 bars.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.154",
       "date": "2026-11-26",
       "title": "Archies Alien Delay 0.2.0: presets, ramp, sample and hold, and a visualiser",
