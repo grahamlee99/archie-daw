@@ -2818,6 +2818,53 @@ int main()
         CHECK (e.undo.depth() == 0, "and there is nothing to undo");
     }
 
+    // ---- NEW SONG leaves nothing behind ----
+    {
+        auto blank = [&] (HostEngine& e, const juce::var& p) { bool done = false; e.loadProject (p, [&] (juce::String) { done = true; }); for (int i = 0; i < 100 && ! done; ++i) { e.service(); juce::Thread::sleep (10); } };
+        auto text = [] (HostEngine& e) { juce::var v = e.saveProject(); if (auto* tr = v.getProperty ("tracks", {}).getArray()) for (auto& t : *tr) if (auto* o = t.getDynamicObject()) { o->removeProperty ("uid"); } return juce::JSON::toString (v); };
+        HostEngine used; used.prepareOffline (sr, bs, 0); blank (used, used.blankProject()); used.addTrack(); used.addTrack();
+        auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", 4.0); juce::Array<juce::var> a; auto* n = new juce::DynamicObject(); n->setProperty ("beat", 1.0); n->setProperty ("len", 0.5); n->setProperty ("note", 62); n->setProperty ("vel", 90); a.add (juce::var (n)); c->setProperty ("notes", a);
+        used.editAddInstance (0, 0.0, 8.0, 0.0, juce::var (c), 0);
+        for (int ti = 0; ti < 2; ++ti)
+        {
+            auto& t = *used.trackAt (ti); t.eqHpOn.store (true); t.compOn.store (true); t.compThr.store (-30.0f); t.gateOn.store (true); t.width.store (0.2f); t.inGainDb.store (6.0f); t.patTrans.store (5);
+            used.eqApply (ti, "b1on", 1.0); used.eqApply (ti, "b1gain", 9.0);
+            auto set = std::make_shared<AutoSet>(); AutoLane l; l.id = 900 + ti; l.kind = 0; l.pts.push_back ({ 0.0, -12.0 }); set->lanes.push_back (l); used.putAuto (ti, set);
+        }
+        used.eqApply (kMasterChain, "b2on", 1.0); used.eqApply (kMasterChain, "b2gain", -7.0); used.eqApply (kMasterChain, "hpOn", 1.0);
+        { juce::Array<juce::var> rm; auto* o = new juce::DynamicObject(); o->setProperty ("slot", 0); o->setProperty ("param", 1); o->setProperty ("cc", 20); rm.add (juce::var (o)); used.loadRemotesVar (0, juce::var (rm)); }
+        used.transport.setTempoEntries ({ TempoEntry(), [] { TempoEntry e2; e2.beat = 16.0; e2.bpm = 150.0; return e2; }() });
+        HostEngine fresh; fresh.prepareOffline (sr, bs, 0); blank (fresh, fresh.blankProject());
+        blank (used, used.blankProject());
+        CHECK (used.trackCount.load() == 0, "a new song has no tracks");
+        CHECK (used.transport.tempoNow()->entries().size() == 1, "and no tempo changes from the last song");
+        used.addTrack(); fresh.addTrack(); used.addTrack(); fresh.addTrack();
+        CHECK (used.trackAt (0)->arrSnap.load()->insts.size() == fresh.trackAt (0)->arrSnap.load()->insts.size() && used.autoVar (0).size() == 0 && used.remoteCount (0) == 0, "a track added to it has no clips, automation or controller assignments from before");
+        const auto u = text (used), w = text (fresh);
+        CHECK (u == w, "and the whole song reads the same as one made in a program that has just started");
+        if (u != w) { juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("newsong-used.json").replaceWithText (u); juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("newsong-fresh.json").replaceWithText (w); }
+    }
+
+    // ---- a track's place is used again: the new one is clean, and undo gives the old one back ----
+    {
+        HostEngine e; e.prepareOffline (sr, bs, 0); e.startEmpty(); e.addTrack(); e.addTrack(); e.addTrack(); e.undo.clear();
+        auto map = [&] (int ti, int cc) { juce::Array<juce::var> rm; auto* o = new juce::DynamicObject(); o->setProperty ("slot", 0); o->setProperty ("param", 1); o->setProperty ("cc", cc); rm.add (juce::var (o)); e.loadRemotesVar (ti, juce::var (rm)); };
+        auto ccOf = [&] (int ti) { const auto v = e.remotesVar (ti); return v.size() == 1 ? (int) v[0].getProperty ("cc", 0) : -v.size(); };
+        auto set = [&] (int ti, float thr, int lane, int cc) { auto& t = *e.trackAt (ti); t.compOn.store (true); t.compThr.store (thr); t.width.store (0.5f); t.eqHpOn.store (true); e.eqApply (ti, "b1on", 1.0); e.eqApply (ti, "b1gain", thr / -6.0); auto s = std::make_shared<AutoSet>(); AutoLane l; l.id = lane; l.kind = 0; l.pts.push_back ({ 0.0, (double) thr }); s->lanes.push_back (l); e.putAuto (ti, s); map (ti, cc); };
+        set (1, -30.0f, 701, 21); set (2, -24.0f, 702, 22);
+        auto has = [&] (int ti, float thr, int lane, int cc) { auto& t = *e.trackAt (ti); const auto a = e.autoVar (ti); return t.compOn.load() && std::abs (t.compThr.load() - thr) < 1e-4f && std::abs (t.width.load() - 0.5f) < 1e-4f && t.eqHpOn.load() && std::abs (e.eqGet (ti, "b1gain") - thr / -6.0) < 1e-4 && a.size() == 1 && (int) a[0].getProperty ("id", 0) == lane && ccOf (ti) == cc; };
+        auto clean = [&] (int ti) { auto& t = *e.trackAt (ti); return ! t.compOn.load() && std::abs (t.compThr.load() + 18.0f) < 1e-4f && std::abs (t.width.load() - 1.0f) < 1e-4f && ! t.eqHpOn.load() && e.eqGet (ti, "b1on") == 0.0 && std::abs (e.eqGet (ti, "b1gain")) < 1e-6 && e.autoVar (ti).size() == 0 && e.remoteCount (ti) == 0; };
+        e.editRemoveTrack (1);
+        CHECK (e.trackCount.load() == 2 && has (1, -24.0f, 702, 22), "removing a track leaves the one after it with its own settings, automation and controller assignment");
+        e.editAddTrack();
+        CHECK (e.trackCount.load() == 3 && clean (2), "a track added afterwards has nothing from the removed one");
+        e.undo.undo(); e.undo.undo();
+        CHECK (e.trackCount.load() == 3 && has (1, -30.0f, 701, 21) && has (2, -24.0f, 702, 22), "undo brings the removed track back with all it had, and the other keeps its own");
+        e.undo.redo(); CHECK (e.trackCount.load() == 2 && has (1, -24.0f, 702, 22), "redo removes it again");
+        e.undo.undo(); CHECK (e.trackCount.load() == 3 && has (1, -30.0f, 701, 21) && has (2, -24.0f, 702, 22), "and undo brings it back again");
+        e.editRemoveTrack (2); e.editAddTrack(); CHECK (clean (2), "the last track too: its place is clean when used again");
+    }
+
     // ---- CRASH GUARD ----
     {
         auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("archie-guard-test"); dir.deleteRecursively(); dir.createDirectory();

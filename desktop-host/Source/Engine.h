@@ -371,6 +371,7 @@ public:
         clearSends (t);
         t.uid.store (nextUid.fetch_add (1)); t.compKey.store (0); t.gateKey.store (0); t.outTo.store (0); t.parallelFrom.store (0);
         t.mute.store (false); t.solo.store (false); t.armed.store (false); t.arrSnap.publish (emptyArrangement()); t.fileSnap.publish (std::make_unique<FileAudio>()); t.filePath = {};
+        wipeTrackPlace (t); clearRemotes (n);      // nothing of a track that used this place before
         t.colour.store (kAutoColours[n % (int) (sizeof (kAutoColours) / sizeof (kAutoColours[0]))]);                  // every track has a colour of its own from the start
         ensureTrackNodes (n);
         trackCount.store (n + 1);
@@ -384,6 +385,7 @@ public:
         auto& t = *tracks[(size_t) (n - 1)];
         for (auto& s : t.slots) s->window.reset();
         trackCount.store (n - 1);
+        clearRemotes (n - 1);
         if (monitorTrack.load() >= n - 1) monitorTrack.store (0);
         for (int s = 0; s < kSends; ++s) { t.sendDb[s].store (-100.0f); t.sendLvl[s].store (-60.0f); t.sendOn[s].store (false); t.sendPre[s].store (false); }
         publishPlan(); quiesce();                      // the audio thread no longer reaches this track: only now is it safe to destroy it
@@ -2369,6 +2371,7 @@ public:
     {
         juce::String name, filePath; int colour = -1; int source = 0; int uid = 0, compKey = 0, gateKey = 0, outTo = 0, parallelFrom = 0, kind = 0; float gainDb = 0, pan = 0; bool mute = false, solo = false;
         std::shared_ptr<Insts> insts; float sendDb[kSends] {}, sendLvl[kSends] {}; bool sendPre[kSends] {}, sendOn[kSends] {}; std::vector<std::shared_ptr<PlugSnap>> plugs;
+        juce::var settings; std::shared_ptr<AutoSet> lanes; std::vector<RemoteMap> maps;      // everything else set on the track, its automation (the same lanes) and its controller assignments
     };
     bool snapSlot (int chain, int slot, PlugSnap& out)
     {
@@ -2400,6 +2403,8 @@ public:
         if (! addTrack()) return;
         const int idx = trackCount.load() - 1;
         auto& t = *tracks[(size_t) idx];
+        loadTrackSettings (t, sn->settings); if (sn->lanes) putAuto (idx, sn->lanes);
+        { const juce::SpinLock::ScopedLockType l (remoteLock); for (auto r : sn->maps) { r.chain = idx; remotes.push_back (r); } }
         if (sn->uid > 0) t.uid.store (sn->uid); t.compKey.store (sn->compKey); t.gateKey.store (sn->gateKey); t.outTo.store (sn->outTo); t.parallelFrom.store (sn->parallelFrom); t.kind.store (sn->kind); publishPlan(); updateSolo();      // it is the same track again: keys that named it find it
         t.colour.store (sn->colour); t.name = sn->name; t.source.store (sn->source); t.gainDb.store (sn->gainDb); t.pan.store (sn->pan); t.mute.store (sn->mute); t.solo.store (sn->solo);
         updateSolo();
@@ -2468,6 +2473,12 @@ public:
         if (from < to) std::rotate (tracks.begin() + from, tracks.begin() + from + 1, tracks.begin() + to + 1);
         else           std::rotate (tracks.begin() + to, tracks.begin() + from, tracks.begin() + from + 1);
         const int lo = juce::jmin (from, to), hi = juce::jmax (from, to);
+        {   // controller assignments name a track by its place: they move with the track
+            const juce::SpinLock::ScopedLockType l (remoteLock);
+            auto moved = [from, to] (int c) { if (c == from) return to; if (from < to && c > from && c <= to) return c - 1; if (from > to && c >= to && c < from) return c + 1; return c; };
+            for (auto& r : remotes) r.chain = moved (r.chain);
+            for (auto& r : remotePend) r.chain = moved (r.chain);
+        }
         for (int i = lo; i <= hi; ++i)
         {
             auto& t = *tracks[(size_t) i]; t.index = i;
@@ -2488,6 +2499,8 @@ public:
         sn->uid = t.uid.load(); sn->compKey = t.compKey.load(); sn->gateKey = t.gateKey.load(); sn->outTo = t.outTo.load(); sn->parallelFrom = t.parallelFrom.load(); sn->kind = t.kind.load();
         sn->colour = t.colour.load(); sn->name = t.name; sn->filePath = t.filePath; sn->source = t.source.load(); sn->gainDb = t.gainDb.load(); sn->pan = t.pan.load(); sn->mute = t.mute.load(); sn->solo = t.solo.load();
         sn->insts = instsOf (t);
+        sn->settings = trackVar (idx); sn->lanes = std::make_shared<AutoSet> (*t.autoSnap.load());
+        { const juce::SpinLock::ScopedLockType l (remoteLock); for (const auto& r : remotes) if (r.chain == idx) sn->maps.push_back (r); }
         for (int s = 0; s < kSends; ++s) { sn->sendDb[s] = t.sendDb[s].load(); sn->sendLvl[s] = t.sendLvl[s].load(); sn->sendOn[s] = t.sendOn[s].load(); sn->sendPre[s] = t.sendPre[s].load(); }
         bool restorable = true;
         for (int i = 0; i < (int) t.slots.size(); ++i) { auto p = std::make_shared<PlugSnap>(); snapSlot (idx, i, *p); restorable = restorable && ! p->internal; sn->plugs.push_back (p); }
@@ -3308,6 +3321,11 @@ public:
             o->setProperty ("sends", sends); o->setProperty ("patterns", patternCountOf (t));
         return juce::var (o);
     }
+    // the settings of a track (not its name, level, clips, automation, sends or plug-ins) from such a value
+    void loadTrackSettings (TrackState& t, const juce::var& tv)
+    {
+        t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
+    }
     // A track made from such a value, added at the end. Clips are NEW copies (not shared with the track it came from). Plug-ins load in the background; `done` is told when they are all in (empty text = fine).
     // Returns the new track's number, or -1 if there is no room.
     int addTrackFromVar (const juce::var& tv, const juce::String& newName, std::function<void (juce::String)> done)
@@ -3315,7 +3333,7 @@ public:
         if (! addTrack()) return -1;
         const int i = trackCount.load() - 1; auto& t = *tracks[(size_t) i];
         t.colour.store (juce::jlimit (-1, kPaletteSize - 1, (int) tv.getProperty ("colour", -1)));
-        t.name = newName.isNotEmpty() ? newName : tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
+        t.name = newName.isNotEmpty() ? newName : tv.getProperty ("name", t.name).toString(); loadTrackSettings (t, tv);
         t.gainDb.store ((float) (double) tv.getProperty ("gainDb", 0.0)); t.pan.store ((float) (double) tv.getProperty ("pan", 0.0));
         t.mute.store ((bool) tv.getProperty ("mute", false)); t.solo.store (false); t.armed.store (false);
         std::map<int, std::shared_ptr<Clip>> knownContent;
@@ -3407,6 +3425,17 @@ public:
             for (const auto& k : knownPlugins.getTypes()) if (k.name == d.name && k.pluginFormatName == d.pluginFormatName && k.manufacturerName == d.manufacturerName && juce::File (k.fileOrIdentifier).exists()) return k;
         return d;
     }
+    // A track's place is used again by the next song, so everything a song can set on it is put back to how a new track has it: a setting the next song does not name must not be the last song's.
+    // (Call only for a place the audio thread no longer reaches: after removeLastTrack.)
+    void wipeTrackPlace (TrackState& t)
+    {
+        t.autoSnap.publish (std::make_unique<AutoSet>()); t.autoMute.store (-1); t.autoTouchUntilMs.store (0.0); for (auto& m : t.autoTouchSendMs) m.store (0.0);
+        t.patWant.store (-1); t.patPlay.store (1); t.patTrans.store (0); t.grooveCh.store (-1); t.inGainDb.store (0.0f); t.inInvert.store (false); t.width.store (1.0f);
+        t.eqHpOn.store (false); t.eqLpOn.store (false); t.eqHpHz.store (80.0f); t.eqLpHz.store (12000.0f);
+        { const EqPanel fresh; for (int i = 0; i < kEqBands; ++i) { t.eq.band[i].on.store (fresh.band[i].on.load()); t.eq.band[i].hz.store (fresh.band[i].hz.load()); t.eq.band[i].gain.store (fresh.band[i].gain.load()); t.eq.band[i].q.store (fresh.band[i].q.load()); } for (auto& hm : t.eq.handUntilMs) hm.store (0.0); }
+        t.compOn.store (false); t.compFast.store (false); t.compPeak.store (true); t.compThr.store (-18.0f); t.compRatio.store (4.0f); t.compRel.store (0.3f); t.compMakeup.store (0.0f);
+        t.gateOn.store (false); t.gateExp.store (false); t.gateFast.store (false); t.gateThr.store (-45.0f); t.gateRange.store (40.0f); t.gateRel.store (0.3f); t.gateHold.store (0.05f);
+    }
     void loadProject (const juce::var& p, std::function<void (juce::String)> done)
     {
         if (p.getProperty ("format", {}).toString() != "archie-studio-project") { done ("this is not an Archie Studio project file"); return; }
@@ -3423,6 +3452,13 @@ public:
             retired.clear();
             for (auto& t : tracks) for (int s = 0; s < kSends; ++s) t->sendProc[s].reset();
         }
+        // nothing of the last song stays behind: its tracks, what was set on their places, its controller assignments, its master EQ and its tempo changes
+        stopAutoLearn();
+        while (trackCount.load() > 0) removeLastTrack();
+        for (auto& t : tracks) wipeTrackPlace (*t);
+        { const juce::SpinLock::ScopedLockType l (remoteLock); remotes.clear(); remotePend.clear(); }
+        loadEqVar (kMasterChain, freshMasterEq);
+        transport.setTempoEntries ({ TempoEntry() });
         auto tp = p.getProperty ("transport", {});
         transport.setBpm ((double) tp.getProperty ("bpm", 120.0)); transport.setTimeSignature ((int) tp.getProperty ("tsNum", 4), (int) tp.getProperty ("tsDen", 4));
         if (auto* tm = tp.getProperty ("tempoMap", {}).getArray()) { std::vector<TempoEntry> es; for (const auto& x : *tm) { TempoEntry te; te.beat = (double) x.getProperty ("beat", 0.0); te.bpm = (double) x.getProperty ("bpm", 120.0); te.tsNum = (int) x.getProperty ("tsNum", 4); te.tsDen = (int) x.getProperty ("tsDen", 4); es.push_back (te); } if (! es.empty()) transport.setTempoEntries (es); }
@@ -3533,8 +3569,10 @@ private:
         masterOwner = std::make_unique<MasterProcessor>(); master = masterOwner.get(); if (masterChain != nullptr) { masterChain->blk = &blk; master->autoFrom = masterChain.get(); } prepareProc (*masterOwner);
         for (auto& r : returns) { r->stripProc = std::make_unique<TrackStripProcessor> (*r); prepareProc (*r->stripProc); }
         for (int i = 0; i < trackCount.load(); ++i) ensureTrackNodes (i);
+        freshMasterEq = eqVar (kMasterChain);      // how a new song's master EQ is
         publishPlan();
     }
+    juce::var freshMasterEq;
 
     // The audio thread only ever follows a RenderPlan: an immutable description of who feeds whom and how much each path is delayed. Every edit that changes the shape builds a new plan and publishes it.
     // PLUG-IN DELAY COMPENSATION: a plug-in that reports a latency of N samples delays its chain by N. So that every path reaches the output lined up:

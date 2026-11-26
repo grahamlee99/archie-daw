@@ -2,6 +2,17 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.157",
+      "date": "2026-11-26",
+      "title": "New song starts clean",
+      "notes": [
+        "Starting a new song, or opening another one, now takes everything from the last song off the screen: its clips, the channel panel and its automation lanes.",
+        "A track added to a new song no longer picks up automation, controller assignments, EQ, compressor, gate or width settings from the song before it, and the new song starts without the old master EQ or tempo changes.",
+        "Deleting a track and adding another gives a clean track, with nothing carried over from the deleted one. Undo still brings the deleted track back with its EQ, automation and controller assignments.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.155",
       "date": "2026-11-26",
       "title": "Alien Delay: bending freeze, finer times and auto throw",

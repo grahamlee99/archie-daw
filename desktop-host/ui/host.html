@@ -1028,9 +1028,15 @@
     else if (ev.type === "skin") { if (typeof applySkinFromHost === "function") applySkinFromHost(ev.data); }
     else if (ev.type === "error") log(String(ev.data), true);
     else if (ev.type === "saved") { log("Saved " + ev.data); refreshFiles(); }
-    else if (ev.type === "opened") { log("Opened " + ev.data); refreshFiles(); }
+    else if (ev.type === "opened") { log("Opened " + ev.data); forgetSongView(); refreshFiles(); }
   }
 
+  // A different song is open: nothing the page remembered about the last one (its clips, selection, waveforms, automation lanes) may stay on screen
+  function forgetSongView() {
+    S.arr = {}; S.arrSig = null; S.sel = 0; S.selInst = 0; S.multi = {}; S.wave = {}; S.hits = {}; S.clip = {}; S.stepContent = null; S.autoShow = {}; S.autoLanes = {}; S.autoRevSeen = {}; S.rendered = ""; S.tp = null; S.tpKey = "";
+    if (typeof R === "object" && R) R.cid = 0;
+    if (S.state && !DOCK) { renderAll(); loadClip(); }
+  }
   // ---- transport ----
   function bbt(t) {
     var barLen = t.tsNum * 4 / t.tsDen, b = t.beats / (4 / t.tsDen);   // beats here are quarter notes
@@ -3207,7 +3213,8 @@
   function tpTarget(st) {
     if (S.tpSel !== S.sel) { S.tpSel = S.sel; S.tp = { kind: "track", id: S.sel }; }       // choosing a track anywhere else brings the panel to it
     var t = S.tp || { kind: "track", id: S.sel };
-    if (t.kind === "track") { var tr = st.tracks[Math.min(S.sel, st.tracks.length - 1)]; return tr ? { kind: "track", chain: tr.index, name: tr.name, d: tr, cmd: "track", idKey: "track", idVal: tr.index } : null; }
+    if (t.kind === "track") { var tr = st.tracks[Math.min(S.sel, st.tracks.length - 1)]; if (tr) return { kind: "track", chain: tr.index, name: tr.name, d: tr, cmd: "track", idKey: "track", idVal: tr.index };
+      return { kind: "master", chain: 200, name: "Master", d: { slots: st.masterSection.slots, latency: st.masterSection.latency, gainDb: st.masterDb }, cmd: "masterDb" }; }      // no tracks: the panel shows the Master, never a track that has gone
     if (t.kind === "return") { var r = st.returns[t.id]; if (r) return { kind: "return", chain: r.index, name: r.name, d: r, cmd: "ret", idKey: "ret", idVal: t.id }; }
     if (t.kind === "master") return { kind: "master", chain: 200, name: "Master", d: { slots: st.masterSection.slots, latency: st.masterSection.latency, gainDb: st.masterDb }, cmd: "masterDb" };
     S.tp = { kind: "track", id: S.sel }; return tpTarget(st);
@@ -3322,6 +3329,8 @@
   function loadArr() {
     var st = S.state; if (!st) return;
     var n = st.tracks.length, got = 0;
+    Object.keys(S.arr).forEach(function (k) { if (+k >= n) delete S.arr[k]; });      // tracks that are not there any more
+    if (!n) { drawArr(); return; }                                                      // no tracks: there is nothing to fetch, but the old clips must still be taken off the screen
     for (var i = 0; i < n; i++) (function (ti) { host("getArrangement", { track: ti }).then(function (r) { if (r && r.ok) S.arr[ti] = r.arrangement; if (++got === n) drawArr(); }); })(i);
   }
   // waveforms: fetched once per sound, drawn into each clip showing the part of the sound that clip plays (looping where the clip is longer than the sound)
