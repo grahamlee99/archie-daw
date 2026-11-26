@@ -6,7 +6,8 @@
       "date": "2026-11-26",
       "title": "The last track can be deleted",
       "notes": [
-        "Fixed: Delete Track in the right-click menu was greyed out when only one track was left. You can now delete every track and start from an empty song. Undo puts a track back."
+        "Fixed: Delete Track in the right-click menu was greyed out when only one track was left. You can now delete every track and start from an empty song. Undo puts a track back.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
       ]
     },
     {
