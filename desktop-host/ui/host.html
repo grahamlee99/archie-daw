@@ -552,6 +552,7 @@
   .mx-ins .mx-btnrow { flex-direction:column; } .mx-ins button.mxb { padding:3px 5px; }
   .mx-ins .mx-slot { padding:1px 2px; } .mx-ins .mx-slot button { padding:0 3px; }
   .mx-pan .kcol { flex-direction:row; justify-content:center; gap:8px; }
+  .mx-key { display:flex; align-items:center; gap:4px; margin:3px 4px 0; font:700 8px/1 var(--font); letter-spacing:0.08em; color:var(--muted); } .mx-key select { flex:1; min-width:0; font-size:10px; padding:1px 2px; }
   .mx-pan .msr button.au { flex:1; }
 
   /* ---- devices in the rack and in the browser: a container picture while a plug-in has no picture of its own ---- */
@@ -1698,12 +1699,23 @@
   function cRel(pos) { var v = 0.05 * Math.pow(24, pos / 100); return v < 0.1 ? Math.round(v * 1000) / 1000 : v < 1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10; }
   function cRelPos(v) { return Math.round(100 * Math.log(Math.max(0.05, Math.min(1.2, v)) / 0.05) / Math.log(24) * 2) / 2; }
   function cText(k, v) { return k === "ratio" ? (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + ":1" : k === "thr" ? Math.round(v * 10) / 10 + " dB" : k === "rel" ? (v < 1 ? Math.round(v * 1000) + " ms" : Math.round(v * 10) / 10 + " s") : "+" + (Math.round(v * 10) / 10) + " dB"; }
+  // SIDE-CHAIN: which track the compressor or gate listens to (a track is named by its own number, so the choice follows it when tracks move)
+  function keyPick(key, own, chosen, title) {
+    var tracks = (S.state && S.state.tracks) || [], h = '<label class="mx-key" title="' + esc(title) + '"><span>KEY</span><select data-sc="' + key + '" data-sct="' + (own ? own.index : -1) + '"><option value="0">' + (own ? "Own sound" : "The mix") + "</option>";
+    tracks.forEach(function (t) { if (own && t.index === own.index) return; h += '<option value="' + t.uid + '"' + (t.uid === chosen ? " selected" : "") + ">" + esc(t.name || ("Track " + (t.index + 1))) + "</option>"; });
+    return h + "</select></label>";
+  }
+  document.addEventListener("change", function (e) {
+    var s = e.target && e.target.getAttribute && e.target.getAttribute("data-sc"); if (!s) return; var v = +e.target.value, ti = +e.target.getAttribute("data-sct"); e.target.blur();
+    (s === "mcKey" ? host("masterComp", { key: s, value: v }) : host("track", { track: ti, key: s, value: v })).then(function (r) { if (r && r.ok === false) log(r.error, true); });
+  });
   function mxDyn(t) {
     var thr = t.compThr === undefined ? -18 : t.compThr, ratio = t.compRatio || 4, rel = t.compRel || 0.3, mk = t.compMakeup || 0;
     function kn(label, key, opts, text, tkey, title) { return '<div class="kcol">' + knobHtml(Object.assign({ title: title + " (drag, wheel, double-click for the starting value)", attrs: 'data-k="' + key + '"' }, opts)) + '<span class="kl" data-dv="' + tkey + '">' + text + "</span><span class=\"kl\">" + label + "</span></div>"; }
     return '<div class="mx-sec mx-dyn"><div class="mx-bar sec-ret">Dynamics</div><div class="msr mx-dbtn"><button class="' + (t.compOn ? "on" : "") + '" data-a="compon" title="Switch the compressor on or off">COMP</button><button class="' + (t.compPeak === false ? "" : "on") + '" data-a="comppeak" title="Lit: a peak detector. Dark: an RMS detector, which reads a steady sound about 3 dB lower and follows the loudness more than the peaks.">PEAK</button><button class="' + (t.compFast ? "on" : "") + '" data-a="compfast" title="Lit: a fast 0.5 ms attack. Dark: a 5 ms attack, which lets the start of a hit through.">FAST</button></div>' +
       '<div class="mx-kgrid">' + kn("RATIO", "compRatioPos", { min: 0, max: 100, step: 0.5, value: cRatioPos(ratio), def: cRatioPos(4) }, cText("ratio", ratio), "ratio", "Ratio") + kn("THRES", "compThr", { min: -40, max: 0, step: 0.5, value: thr, def: -18 }, cText("thr", thr), "thr", "Threshold") +
       kn("REL", "compRelPos", { min: 0, max: 100, step: 0.5, value: cRelPos(rel), def: cRelPos(0.3) }, cText("rel", rel), "rel", "Release") + kn("MAKE-UP", "compMakeup", { min: 0, max: 24, step: 0.5, value: mk, def: 0 }, cText("make", mk), "make", "Make-up gain") + "</div>" +
+      keyPick("compKey", t, t.compKey, "The compressor listens to this track instead of its own sound: pick the drums to duck a bass") +
       '<div class="mx-gr" title="Gain reduction: how much the compressor is turning the sound down"><i id="grm' + t.index + '"></i></div></div>' + mxGate(t);
   }
   // the channel gate (under the compressor): GATE, EXP (a gentle 2:1 expander) and FAST switches; RANGE, THRES, REL and HOLD knobs; a reduction bar
@@ -1716,6 +1728,7 @@
     return '<div class="mx-sec mx-dyn mx-gate"><div class="mx-bar sec-ret">Gate</div><div class="msr mx-dbtn"><button class="' + (t.gateOn ? "on" : "") + '" data-a="gateon" title="Switch the gate on or off">GATE</button><button class="' + (t.gateExp ? "on" : "") + '" data-a="gateexp" title="Lit: a gentle 2:1 expander, which turns the sound down by one more dB for each dB below the threshold, never more than the range. Dark: a gate, which shuts the sound when it falls below the threshold.">EXP</button><button class="' + (t.gateFast ? "on" : "") + '" data-a="gatefast" title="Lit: a very fast opening (0.05 ms). Dark: 0.5 ms.">FAST</button></div>' +
       '<div class="mx-kgrid">' + kn("RANGE", "gateRange", { min: 0, max: 80, step: 1, value: range, def: 40 }, gText("range", range), "range", "Range: how far the sound is turned down when the gate is shut") + kn("THRES", "gateThr", { min: -80, max: 0, step: 0.5, value: thr, def: -45 }, gText("gthr", thr), "gthr", "Threshold") +
       kn("REL", "gateRelPos", { min: 0, max: 100, step: 0.5, value: gRelPos(rel), def: gRelPos(0.3) }, gText("grel", rel), "grel", "Release: how long the gate takes to shut") + kn("HOLD", "gateHold", { min: 0, max: 1000, step: 5, value: Math.round(hold * 1000), def: 50 }, gText("ghold", hold), "ghold", "Hold: how long the gate stays open after the sound falls below the threshold") + "</div>" +
+      keyPick("gateKey", t, t.gateKey, "The gate opens when this track is loud instead of its own sound") +
       '<div class="mx-gr" title="Gate reduction: how much the gate is turning the sound down"><i id="ggm' + t.index + '"></i></div></div>';
   }
   // the channel EQ: a high-pass and a low-pass filter (12 dB per octave), each with an on switch and a frequency knob. The knobs are positions 0 to 100 along a log scale.
@@ -1746,7 +1759,7 @@
     return '<div class="mx-sec mx-dyn mx-mcomp"><div class="mx-bar sec-mst">Master compressor</div><div class="msr mx-dbtn"><button class="' + (mc.mcOn ? "on" : "") + '" data-ma="mcOn" title="Switch the master compressor on or off">ON</button><button class="' + (mc.mcPeak ? "on" : "") + '" data-ma="mcPeak" title="Lit: a peak detector. Dark: an RMS detector, which follows the loudness of the mix more than its peaks (usual for a master).">PEAK</button></div>' +
       '<div class="mx-kgrid mx-kgrid3">' + kn("THRESHOLD", "mcThr", { min: -40, max: 0, step: 0.5, value: thr, def: -12 }, mText("thr", thr), "thr", "Threshold") + kn("RATIO", "mcRatioPos", { min: 0, max: 100, step: 0.5, value: cRatioPos(ratio), def: cRatioPos(2) }, mText("ratio", ratio), "ratio", "Ratio") + kn("ATTACK", "mcAtkPos", { min: 0, max: 100, step: 0.5, value: mAtkPos(atk), def: mAtkPos(0.01) }, mText("atk", atk), "atk", "Attack") +
       kn("RELEASE", "mcRelPos", { min: 0, max: 100, step: 0.5, value: cRelPos(rel), def: cRelPos(0.3) }, mText("rel", rel), "rel", "Release") + kn("MAKE-UP", "mcMakeup", { min: 0, max: 24, step: 0.5, value: mk, def: 0 }, mText("make", mk), "make", "Make-up gain") + "</div>" +
-      '<div class="mx-gr" title="Gain reduction: how much the compressor is turning the whole mix down"><i id="mgrm"></i></div><div class="mx-nbrow" title="An external side-chain key (a track that triggers the compressor): not built yet">Side-chain key<i>not built</i></div></div>';
+      '<div class="mx-gr" title="Gain reduction: how much the compressor is turning the whole mix down"><i id="mgrm"></i></div>' + keyPick("mcKey", null, mc.mcKey, "The master compressor listens to this track instead of the whole mix: pick the kick for a pumping mix") + '</div>';
   }
   // THE ARCHIE SOUND: the program's own sound at the end of the master. PUSH drives the mix harder into the limiter, DRIVE warms and rounds the peaks, BASS and TONE shape it, the limiter keeps everything under the CEILING.
   // A loudness TARGET (LUFS, as streaming services measure it) makes PUSH follow the loudness of the finished mix by itself. PRESETS set the lot in one go.
@@ -1817,7 +1830,7 @@
   function wireDim() { Array.prototype.forEach.call(document.querySelectorAll("[data-crdim]"), function (b) { b.onclick = function () { var cr = (S.state && S.state.controlRoom) || {}; host("controlRoom", { key: "crDim", value: !cr.crDim }); }; }); }
   function mxNb(name, why) { return '<div class="mx-sec mx-nb" title="' + esc(why || (name + " needs an effect this program does not have yet. It is shown so you can see where it will go.")) + '"><div class="mx-bar sec-nb">' + esc(name) + "<i>not built</i></div></div>"; }
   function drawMixer(st) {
-    var key = JSON.stringify([st.masterComp && [st.masterComp.mcOn, st.masterComp.mcPeak], st.masterSound && [st.masterSound.amOn, st.masterSound.amCut, Math.round(st.masterSound.amTarget || 0)], st.controlRoom && [st.controlRoom.crDim, st.controlRoom.crPair], st.outputChannels, st.tracks.map(function (t) { return [t.name, t.colour, t.inInvert, t.eqHpOn, t.eqLpOn, t.compOn, t.compPeak, t.compFast, t.gateOn, t.gateExp, t.gateFast, t.slots, t.mute, t.solo, t.armed, t.autoLanes, t.autoOn, t.sends.map(function (s) { return [s.db > -59.5, s.pre]; })]; }), st.returns.map(function (r) { return [r.name, r.slots, r.mute, r.autoLanes, r.autoOn]; }), st.masterSection, st.plugins.length, S.sel]);
+    var key = JSON.stringify([st.masterComp && [st.masterComp.mcOn, st.masterComp.mcPeak, st.masterComp.mcKey], st.masterSound && [st.masterSound.amOn, st.masterSound.amCut, Math.round(st.masterSound.amTarget || 0)], st.controlRoom && [st.controlRoom.crDim, st.controlRoom.crPair], st.outputChannels, st.tracks.map(function (t) { return [t.name, t.colour, t.inInvert, t.eqHpOn, t.eqLpOn, t.compOn, t.compPeak, t.compFast, t.gateOn, t.gateExp, t.gateFast, t.uid, t.compKey, t.gateKey, t.slots, t.mute, t.solo, t.armed, t.autoLanes, t.autoOn, t.sends.map(function (s) { return [s.db > -59.5, s.pre]; })]; }), st.returns.map(function (r) { return [r.name, r.slots, r.mute, r.autoLanes, r.autoOn]; }), st.masterSection, st.plugins.length, S.sel]);
     if (key === S.mxKey) { syncMixerValues(st); return; }
     S.mxKey = key;
     var h = "";
@@ -2948,13 +2961,13 @@
   $("snapGrid").onchange = function () { S.snap.grid = parseFloat(this.value); applySnap(); };
   // groove
   // ---- the Groove dock: four banks of eight channels. A1 is the global swing (it is also in the tool bar); A2 to D8 are groove channels: each plays a groove patch through a strength, with slide, shuffle and (in the panel on the right)
-  // timing, velocity and length impacts, random timing and an anchor. A track (in the Track Panel) or a single clip (in its strip) chooses a channel to play through. Pre-align and Global shuffle are not built. ----
+  // timing, velocity and length impacts, random timing and an anchor. A track (in the Track Panel) or a single clip (in its strip) chooses a channel to play through. Pre-align puts the notes on the grid first; Global shuffle is one shared amount. ----
   S.grvBank = "A"; S.grvSel = 0; S.lastSwing = 0.5; S.grvSig = "";
   function grvName(idx) { return "ABCD".charAt(idx >> 3) + ((idx & 7) + 1); }
   function grvData() { return (S.state && S.state.groove) || { channels: [], patches: [] }; }
   function grvSend(ch, key, value) { return host("groove", { ch: ch, key: key, value: value }).then(function (r) { if (r && r.ok === false) log(r.error, true); return r; }); }
   function grvPatchOpts(sel) { return (grvData().patches || []).map(function (q) { return '<option value="' + esc(q.name) + '"' + (q.name === sel ? " selected" : "") + ">" + esc(q.name) + (q.builtin ? "" : " (mine)") + "</option>"; }).join(""); }
-  function grvStructSig() { var g = grvData(); return JSON.stringify([S.grvBank, S.grvSel, (g.channels || []).map(function (c) { return c && [c.on, c.patch]; }), (g.patches || []).map(function (q) { return q.name; })]); }
+  function grvStructSig() { var g = grvData(); return JSON.stringify([S.grvBank, S.grvSel, g.globalShuffle, (g.channels || []).map(function (c) { return c && [c.on, c.patch, c.pre, c.glob]; }), (g.patches || []).map(function (q) { return q.name; })]); }
   // the channels a track or a clip can choose: those that are on or have a groove, and the one chosen now
   function grooveChoices(sel, first) { var h = first || ""; (grvData().channels || []).forEach(function (c, i) { if (i < 1 || !c) return; if (!(c.on || c.patch || sel === i)) return; h += '<option value="' + i + '"' + (sel === i ? " selected" : "") + ">" + grvName(i) + (c.patch ? " " + esc(c.patch) : "") + (c.on ? "" : " (off)") + "</option>"; }); return h; }
   function grvDraw() {
@@ -2973,7 +2986,7 @@
         '<select class="patch" data-g="patch" title="The groove this channel plays"><option value="">(none)</option>' + grvPatchOpts(c.patch) + "</select>" +
         '<input type="range" class="gv" data-g="strength" min="0" max="1" step="0.01" value="' + (c.strength === undefined ? 1 : c.strength) + '" title="How much of the groove is applied: 0 does nothing at all, 1 is all of it"><div class="tiny">GROOVE</div>' +
         '<div class="knobs"><div class="kcol">' + knobHtml({ min: -50, max: 50, step: 1, value: c.slide || 0, def: 0, bi: true, title: "Slide: every note later or earlier, as a percent of a step (double-click for 0)", attrs: 'data-g="slide"' }) + '<span class="kl">SLIDE</span></div><div class="kcol">' + knobHtml({ min: 0, max: 100, step: 1, value: c.shuffle || 0, def: 0, title: "Shuffle: a swing on every second step (double-click for 0)", attrs: 'data-g="shuffle"' }) + '<span class="kl">SHUFFLE</span></div></div>' +
-        '<label class="tiny"><input type="checkbox" disabled> Pre-align</label><label class="tiny"><input type="checkbox" disabled> Global shuffle</label><div class="nbt">those two: not built</div></div>';
+        '<label class="tiny" title="Put each note on the grid first, then apply this groove"><input type="checkbox" data-g="pre"' + (c.pre ? " checked" : "") + '> Pre-align</label><label class="tiny" title="Use the one Global shuffle value instead of the shuffle knob of this channel"><input type="checkbox" data-g="glob"' + (c.glob ? " checked" : "") + '> Global shuffle</label></div>';
     }
     box.innerHTML = h; knobInit(box);
     Array.prototype.forEach.call(box.querySelectorAll("[data-edit]"), function (b) { b.onclick = function () { S.grvSel = +b.getAttribute("data-edit"); grvDraw(); }; });
@@ -2983,6 +2996,7 @@
         var k = c.getAttribute("data-g");
         if (k === "on") c.onclick = function () { var cc = ((grvData().channels || [])[idx]) || {}; grvSend(idx, "on", !cc.on); };
         else if (k === "patch") c.onchange = function () { grvSend(idx, "patch", c.value); };
+        else if (k === "pre" || k === "glob") c.onchange = function () { grvSend(idx, k, c.checked); };
         else c.oninput = function () { grvSend(idx, k, parseFloat(c.value)); };
       });
     });
@@ -3008,7 +3022,8 @@
       '<div class="gs-row"><button id="gExtract" title="Make a groove from how the clip selected in the track view is played: its timing, accents and note lengths, one bar long">Extract from the selected clip</button></div>' + (pat && !pat.builtin ? '<div class="gs-row"><button id="gDelete" title="Delete this groove that you extracted">Delete this groove</button></div>' : "") +
       num("Timing impact (%)", "timing", c.timing, 0, 200, 1, "How much of the groove's timing is used: 100 is all of it, 0 none, 200 twice as much") + num("Velocity impact (%)", "vel", c.vel, 0, 200, 1, "How much of the groove's loudness pattern is used") + num("Note length impact (%)", "len", c.len, 0, 200, 1, "How much of the groove's note length pattern is used") +
       num("Random timing (ticks)", "rand", c.rand, 0, 120, 1, "Each note is nudged earlier or later by up to this many ticks (480 to a beat). The same note always gets the same nudge, so playback repeats") + num("Anchor point (step)", "anchor", c.anchor, 0, 63, 1, "Which step of the groove lines up with the start of the clip") +
-      '<div class="gs-row"><span>Global shuffle</span><input type="number" disabled value="0"><span class="nbt" style="width:auto">not built</span></div>';
+      '<div class="gs-row"><span title="One shuffle for every channel with Global shuffle ticked: 0 is straight, 100 the most">Global shuffle (%)</span><input type="number" id="gGlob" min="0" max="100" step="1" value="' + (g.globalShuffle || 0) + '"></div>';
+    var gl = $("gGlob"); if (gl) gl.onchange = function () { grvSend(idx, "globalShuffle", parseFloat(gl.value) || 0); };
     var ps = side.querySelector('[data-gs="patch"]'); if (ps) ps.onchange = function () { grvSend(idx, "patch", ps.value); };
     Array.prototype.forEach.call(side.querySelectorAll("input[data-g]"), function (el) { el.onchange = function () { grvSend(idx, el.getAttribute("data-g"), parseFloat(el.value) || 0); }; });
     var ex = $("gExtract"); if (ex) ex.onclick = function () {

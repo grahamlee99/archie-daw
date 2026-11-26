@@ -3090,6 +3090,51 @@ int main()
         }
     }
 
+    // SIDE-CHAIN: the compressor, gate and master compressor can listen to another track
+    {
+        auto peakAfter = [&] (HostEngine& e) { auto o = run (e, 120, bs); float pk = 0; for (size_t i = o.size() / 2; i < o.size(); ++i) pk = std::max (pk, std::abs (o[i])); return pk; };
+        auto set = [] (HostEngine& e, int track, const char* key, juce::var v) { return e.editChainParam (track, key, v); };
+        HostEngine e; e.prepareOffline (sr, bs, 0);
+        e.trackAt (0)->source.store (2);                                  // the listener: a steady tone
+        const int keyUid = e.trackAt (2)->uid.load();                     // the key is a LATER track, so it has to be rendered first
+        CHECK (keyUid > 0 && keyUid != e.trackAt (0)->uid.load(), "every track has a number of its own");
+        set (e, 0, "compOn", true); set (e, 0, "compThr", -30.0); set (e, 0, "compRatio", 20.0);
+        const float own = peakAfter (e); CHECK (own < 0.12f, "on its own sound the compressor turns the tone down");
+        CHECK (set (e, 0, "compKey", keyUid), "a track can be chosen as the key");
+        run (e, 800, bs); const float quiet = peakAfter (e); CHECK (std::abs (quiet - 0.25f) < 0.005f, "with a silent key nothing is turned down");
+        e.trackAt (2)->source.store (2); set (e, 2, "mute", true);
+        const float ducked = peakAfter (e); CHECK (ducked < 0.12f, "a loud key ducks the track, even while the key track is muted");
+        CHECK (e.planNow()->levels.size() == 2, "the key is rendered before the track that listens to it");
+        e.moveTrackTo (2, 3); CHECK (peakAfter (e) < 0.12f, "the key follows its track when tracks move");
+        auto song = e.saveProject(); HostEngine g; g.prepareOffline (sr, bs, 0); g.loadProject (song, [] (juce::String) {});
+        CHECK (g.trackAt (0)->compKey.load() == keyUid && g.trackAt (3)->uid.load() == keyUid, "and is saved with the song");
+        g.editAddTrack(); CHECK (g.trackAt (g.trackCount.load() - 1)->uid.load() > keyUid, "a track added afterwards gets a new number");
+        set (e, 3, "compKey", e.trackAt (0)->uid.load());                 // each keys the other
+        const auto* plan = e.planNow(); CHECK (! (plan->tracks[0].compKey >= 0 && plan->tracks[3].compKey >= 0), "two tracks keying each other: one of the two is left out, never both");
+        peakAfter (e); set (e, 3, "compKey", 0);
+        // the gate keyed from another track
+        set (e, 0, "compKey", 0); set (e, 0, "compOn", false); set (e, 0, "gateOn", true); set (e, 0, "gateThr", -30.0); set (e, 0, "gateRange", 80.0); set (e, 0, "gateKey", keyUid);
+        e.trackAt (3)->source.store (0); const float shut = peakAfter (e); e.trackAt (3)->source.store (2); for (int i = 0; i < 3; ++i) run (e, 60, bs); const float open = peakAfter (e);
+        CHECK (shut < 0.01f && std::abs (open - 0.25f) < 0.01f, "the gate stays shut until its key is loud");
+        set (e, 0, "gateOn", false); set (e, 0, "gateKey", 0);
+        // the master compressor keyed from a muted track
+        e.editMasterCompParam ("mcOn", true); e.editMasterCompParam ("mcThr", -30.0); e.editMasterCompParam ("mcRatio", 20.0); e.editMasterCompParam ("mcKey", keyUid);
+        e.trackAt (3)->source.store (0); for (int i = 0; i < 3; ++i) run (e, 120, bs); const float mQuiet = peakAfter (e); e.trackAt (3)->source.store (2); const float mDuck = peakAfter (e);
+        CHECK (std::abs (mQuiet - 0.25f) < 0.01f && mDuck < 0.12f, "the master compressor listens to its key track instead of the mix");
+        e.editRemoveTrack (3); CHECK (e.planNow()->masterKey < 0 && peakAfter (e) >= 0.0f, "when the key track is removed the compressor listens to its own sound again");
+    }
+    // GROOVE: pre-align and one global shuffle
+    {
+        GrooveSet g = defaultGrooveSet(); g.ch[1].on = true; g.ch[1].patch = "Straight"; g.ch[1].shuffle = 60.0f; g.globalShuffle = 30.0f;
+        auto place = [&] (double at) { NoteEv n; n.beat = at; n.len = 0.2; double b = 0, l = 0; int v = 100; GrooveEval::make (g, 1, 1).apply (n, b, l, v); return b; };
+        CHECK (std::abs (place (0.27) - (0.27 + 0.6 * 0.25 / 3.0)) < 1e-6, "without pre-align a late note keeps its lateness and takes the channel's shuffle");
+        g.ch[1].preAlign = true; CHECK (std::abs (place (0.27) - (0.25 + 0.6 * 0.25 / 3.0)) < 1e-6, "pre-align puts it on the grid first");
+        g.ch[1].useGlobal = true; CHECK (std::abs (place (0.27) - (0.25 + 0.3 * 0.25 / 3.0)) < 1e-6, "global shuffle uses the shared amount instead of the channel's knob");
+        HostEngine e; CHECK (e.editGrooveChan (1, "pre", true) && e.editGrooveChan (1, "glob", true) && e.editGrooveChan (1, "globalShuffle", 45.0), "all three can be set");
+        auto song = e.saveProject(); HostEngine f; f.prepareOffline (sr, bs, 0); f.loadProject (song, [] (juce::String) {}); const auto gs = f.grooveCopy();
+        CHECK (gs.ch[1].preAlign && gs.ch[1].useGlobal && std::abs (gs.globalShuffle - 45.0f) < 1e-4f, "and are saved with the song");
+    }
+
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

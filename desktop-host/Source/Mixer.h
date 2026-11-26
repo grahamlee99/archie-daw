@@ -157,11 +157,12 @@ inline double grooveMap (double b, double g, double d)
 // A note keeps its own small deviations: the groove adds to where the note is, it does not snap it to the grid. Applied when the notes are played, never to the clip itself.
 struct StepMod { float timing = 0.0f, vel = 0.0f, len = 0.0f; };
 struct GroovePatch { juce::String name; double grid = 0.25, cycle = 4.0; std::vector<StepMod> steps; bool builtin = false; int stepCount() const { return juce::jmax (1, (int) std::lround (cycle / juce::jmax (1.0e-6, grid))); } };
-struct GrooveChan { bool on = false; juce::String patch; float strength = 1.0f, timing = 100.0f, vel = 100.0f, len = 100.0f, rand = 0.0f, slide = 0.0f, shuffle = 0.0f; int anchor = 0; };
+struct GrooveChan { bool on = false; juce::String patch; float strength = 1.0f, timing = 100.0f, vel = 100.0f, len = 100.0f, rand = 0.0f, slide = 0.0f, shuffle = 0.0f; int anchor = 0;
+    bool preAlign = false, useGlobal = false; };      // preAlign: put each note on the grid first, then apply the groove. useGlobal: take the shuffle from the one Global shuffle value
 constexpr int kGrooveChans = 32;       // four banks of eight; channel 0 (A1) is the global Swing, so the patch channels are 1 to 31
 struct GrooveSet
 {
-    GrooveChan ch[kGrooveChans]; std::vector<GroovePatch> patches;
+    GrooveChan ch[kGrooveChans]; std::vector<GroovePatch> patches; float globalShuffle = 0.0f;
     const GroovePatch* find (const juce::String& name) const { for (const auto& p : patches) if (p.name == name) return &p; return nullptr; }
 };
 inline std::vector<GroovePatch> builtinGroovePatches()
@@ -183,11 +184,11 @@ inline GrooveSet defaultGrooveSet() { GrooveSet g; g.patches = builtinGroovePatc
 // what one groove channel does to one note (message-free and allocation-free: it runs on the audio thread)
 struct GrooveEval
 {
-    const GrooveChan* c = nullptr; const GroovePatch* p = nullptr; int instId = 0;
+    const GrooveChan* c = nullptr; const GroovePatch* p = nullptr; int instId = 0; float globalShuffle = 0.0f;
     bool active() const { return c != nullptr && c->on && c->strength > 0.0f; }
     static GrooveEval make (const GrooveSet& set, int ch, int instId)
     {
-        GrooveEval e; if (ch < 1 || ch >= kGrooveChans) return e; e.c = &set.ch[ch]; e.instId = instId; if (e.c->on && e.c->strength > 0.0f) e.p = set.find (e.c->patch); return e;
+        GrooveEval e; if (ch < 1 || ch >= kGrooveChans) return e; e.c = &set.ch[ch]; e.instId = instId; e.globalShuffle = set.globalShuffle; if (e.c->on && e.c->strength > 0.0f) e.p = set.find (e.c->patch); return e;
     }
     static double hashUnit (uint64_t a, uint64_t b, uint64_t d)      // repeatable pseudo-random number in -1..1
     { uint64_t x = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xBF58476D1CE4E5B9ull ^ (d + 0x94D049BB133111EBull) * 0xD6E8FEB86659FD93ull; x ^= x >> 31; x *= 0x7FB5D329728EA185ull; x ^= x >> 27; x *= 0x81DADEF4BC2DD44Dull; x ^= x >> 33; return (double) (x >> 11) / 9007199254740992.0 * 2.0 - 1.0; }
@@ -197,9 +198,9 @@ struct GrooveEval
         const long long idx = std::llround (nt.beat / grid); const int step = (int) (((idx + c->anchor) % n + n) % n);
         StepMod m; if (p != nullptr && (size_t) step < p->steps.size()) m = p->steps[(size_t) step];
         double off = (double) m.timing * grid * ((double) c->timing / 100.0) * s + (double) c->slide / 100.0 * grid * s;
-        if (idx & 1) off += (double) c->shuffle / 100.0 * grid / 3.0 * s;
+        if (idx & 1) off += (double) (c->useGlobal ? globalShuffle : c->shuffle) / 100.0 * grid / 3.0 * s;
         if (c->rand > 0.0f) off += hashUnit ((uint64_t) instId, (uint64_t) std::llround (nt.beat * 480.0), (uint64_t) nt.note) * (double) c->rand / 480.0 * s;
-        beat = nt.beat + off;
+        beat = (c->preAlign ? (double) idx * grid : nt.beat) + off;
         len = juce::jmax (0.02, nt.len * (1.0 + (double) m.len / 100.0 * ((double) c->len / 100.0) * s));
         vel = juce::jlimit (1, 127, (int) std::lround ((double) nt.vel * (1.0 + (double) m.vel / 100.0 * ((double) c->vel / 100.0) * s)));
     }
@@ -669,7 +670,7 @@ struct CompStage
 {
     static constexpr float kThrMin = -40.0f, kThrMax = 0.0f, kRatioMin = 1.1f, kRatioMax = 20.0f, kRelMin = 0.05f, kRelMax = 1.2f, kMakeMax = 24.0f;
     // returns the biggest gain reduction (dB, positive) seen in the block
-    float process (juce::AudioBuffer<float>& buf, int n, bool on, float thr, float ratio, float relSec, bool fast, bool peakMode, float makeupDb, double sr, float attackSec = -1.0f)
+    float process (juce::AudioBuffer<float>& buf, int n, bool on, float thr, float ratio, float relSec, bool fast, bool peakMode, float makeupDb, double sr, float attackSec = -1.0f, const float* keyL = nullptr, const float* keyR = nullptr)
     {
         if (rate != sr) { rate = sr; mixStep = (float) (1.0 / juce::jmax (1.0, 0.005 * sr)); mix = 0.0f; env = ms = 0.0f; grDb = 0.0f; }
         if (! on && mix <= 0.0f) { env = ms = 0.0f; grDb = 0.0f; return 0.0f; }                          // off: leave the sound exactly as it is
@@ -686,8 +687,9 @@ struct CompStage
             mix = on ? juce::jmin (1.0f, mix + mixStep) : juce::jmax (0.0f, mix - mixStep);
             const float xl = l[i], xr = r != nullptr ? r[i] : xl;
             float lvl;
-            if (peakMode) { const float a = juce::jmax (std::abs (xl), std::abs (xr)); env = a > env ? a : a + (env - a) * detRel; lvl = env; }
-            else { ms += ((xl * xl + xr * xr) * 0.5f - ms) * rmsK; lvl = std::sqrt (ms); }
+            const float kl = keyL != nullptr ? keyL[i] : xl, kr = keyL != nullptr ? (keyR != nullptr ? keyR[i] : keyL[i]) : xr;      // SIDE-CHAIN: what the detector listens to (its own sound unless a key is given)
+            if (peakMode) { const float a = juce::jmax (std::abs (kl), std::abs (kr)); env = a > env ? a : a + (env - a) * detRel; lvl = env; }
+            else { ms += ((kl * kl + kr * kr) * 0.5f - ms) * rmsK; lvl = std::sqrt (ms); }
             const float levelDb = 20.0f * std::log10 (juce::jmax (lvl, 1.0e-6f)), over = levelDb - thr, target = over > 0.0f ? over * slope : 0.0f;
             grDb = target + (grDb - target) * (target > grDb ? atk : rel);
             worst = juce::jmax (worst, grDb);
@@ -706,7 +708,7 @@ struct GateStage
 {
     static constexpr float kThrMin = -80.0f, kThrMax = 0.0f, kRangeMax = 80.0f, kRelMin = 0.05f, kRelMax = 4.0f, kHoldMax = 2.0f;
     // returns the biggest gain reduction (dB, positive) seen in the block
-    float process (juce::AudioBuffer<float>& buf, int n, bool on, bool expander, bool fast, float thr, float range, float relSec, float holdSec, double sr)
+    float process (juce::AudioBuffer<float>& buf, int n, bool on, bool expander, bool fast, float thr, float range, float relSec, float holdSec, double sr, const float* keyL = nullptr, const float* keyR = nullptr)
     {
         if (rate != sr) { rate = sr; mixStep = (float) (1.0 / juce::jmax (1.0, 0.005 * sr)); mix = 0.0f; env = 0.0f; grDb = 0.0f; hold = 0; open = false; }
         if (! on && mix <= 0.0f) { env = 0.0f; grDb = 0.0f; hold = 0; open = false; return 0.0f; }               // off: leave the sound exactly as it is
@@ -718,7 +720,7 @@ struct GateStage
         for (int i = 0; i < n; ++i)
         {
             mix = on ? juce::jmin (1.0f, mix + mixStep) : juce::jmax (0.0f, mix - mixStep);
-            const float xl = l[i], xr = r != nullptr ? r[i] : xl, a = juce::jmax (std::abs (xl), std::abs (xr));
+            const float xl = l[i], xr = r != nullptr ? r[i] : xl, a = keyL != nullptr ? juce::jmax (std::abs (keyL[i]), std::abs (keyR != nullptr ? keyR[i] : keyL[i])) : juce::jmax (std::abs (xl), std::abs (xr));
             env = a > env ? a : a + (env - a) * detRel;
             const float levelDb = 20.0f * std::log10 (juce::jmax (env, 1.0e-6f));
             float target;
@@ -779,6 +781,8 @@ struct TrackState
     EqPanel eq; ParaEq paraEq;                                                                                       // and the four parametric bands behind them, with the spectrum the EQ panel shows
     EqStage eqStage;
     std::atomic<bool> compOn { false }, compFast { false }, compPeak { true }; std::atomic<float> compThr { -18.0f }, compRatio { 4.0f }, compRel { 0.3f }, compMakeup { 0.0f };     // the channel compressor
+    // SIDE-CHAIN KEYS: a track has a number of its own (uid) that moves with it; compKey / gateKey name the track whose sound the compressor / gate listens to instead of its own (0 = its own)
+    std::atomic<int> uid { 0 }, compKey { 0 }, gateKey { 0 };
     std::atomic<float> compGr { 0.0f };                                                    // the most gain reduction (dB) since the page last asked: the Mixer's meter
     CompStage compStage;
     std::atomic<float> width { 1.0f }; WidthStage widthStage;                              // the channel's stereo width (0 mono, 1 unchanged, 2 twice as wide)
@@ -1295,7 +1299,7 @@ public:
     {
         if (autoFrom != nullptr && autoFrom->blk != nullptr && autoFrom->blk->playing && autoFrom->blk->numSegs > 0) { const auto* eas = autoFrom->autoSnap.load(); if (eas != nullptr) for (const auto& lane : eas->lanes) if (lane.kind == kEqLaneKind && lane.on && ! lane.pts.empty()) applyEqLane (eq, eqHpOn, eqHpHz, eqLpOn, eqLpHz, lane.param, autoValueAt (lane, autoFrom->blk->segs[0].startBeat)); }      // the master EQ lanes
         eqStage.process (buf, buf.getNumSamples(), eqHpOn.load(), eqHpHz.load(), eqLpOn.load(), eqLpHz.load(), rate); paraEq.process (buf, buf.getNumSamples(), eq, rate); eq.feed (buf, buf.getNumSamples());      // the master EQ comes first, then the compressor
-        { const float gr = comp.process (buf, buf.getNumSamples(), cOn.load(), cThr.load(), cRatio.load(), cRel.load(), false, cPeak.load(), cMake.load(), rate, cAtk.load()); if (gr > cGr.load (std::memory_order_relaxed)) cGr.store (gr, std::memory_order_relaxed); }       // the master compressor: after the master inserts, before the master fader
+        { const float gr = comp.process (buf, buf.getNumSamples(), cOn.load(), cThr.load(), cRatio.load(), cRel.load(), false, cPeak.load(), cMake.load(), rate, cAtk.load(), keyL, keyR); if (gr > cGr.load (std::memory_order_relaxed)) cGr.store (gr, std::memory_order_relaxed); }       // the master compressor: after the master inserts, before the master fader
         gain.setTargetValue (juce::Decibels::decibelsToGain (gainDb.load(), -90.0f));
         const int n = buf.getNumSamples();
         auto* l = buf.getWritePointer (0); auto* r = buf.getWritePointer (1);
@@ -1327,6 +1331,7 @@ public:
         }
     }
     std::atomic<float> gainDb { 0.0f }, peakL { 0.0f }, peakR { 0.0f };
+    std::atomic<int> cKey { 0 }; const float *keyL = nullptr, *keyR = nullptr;      // the master compressor's side-chain: the chosen track (0 = the mix itself); the pointers are set by the renderer each block
     // THE MASTER COMPRESSOR (Mixer, Master Section): the same compressor as a channel's, across the whole mix, with its own attack
     std::atomic<bool> cOn { false }, cPeak { false }; std::atomic<float> cThr { -12.0f }, cRatio { 2.0f }, cAtk { 0.01f }, cRel { 0.3f }, cMake { 0.0f }, cGr { 0.0f };
     CompStage comp;

@@ -2,6 +2,17 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.151",
+      "date": "2026-11-26",
+      "title": "Side-chain keys and groove options",
+      "notes": [
+        "New: side-chain. On a channel's compressor or gate, choose another track under Key, so the drums can duck a bass or open a gate. The master compressor has a Key too.",
+        "The key is taken before the key track's fader, so a muted track still works as a key. The choice follows the track if you move it, and is saved with the song.",
+        "New in the Groove dock: Pre-align puts notes on the grid before the groove, and Global shuffle makes a channel use one shared shuffle amount.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.150",
       "date": "2026-11-26",
       "title": "MIDI controller lanes",

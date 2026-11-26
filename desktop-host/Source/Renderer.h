@@ -162,6 +162,7 @@ struct TrackPlan
     SendPlan sends[kSends];
     bool anyPre = false;
     int index = 0, delay = 0;                 // delay: samples added so this track lines up with the slowest track
+    int compKey = -1, gateKey = -1; bool isKey = false;      // side-chain: the plan tracks whose sound the compressor / gate listen to, and whether this track is anyone's key
     int sendExtra[kSends] {};                 // extra delay on a send tap so every track's tap still arrives together at the return
 };
 struct ReturnPlan
@@ -179,6 +180,8 @@ struct RenderPlan
     std::vector<int> rootTracks;              // the tracks that go into the master mix, in a fixed order
     std::vector<PlugRef> masterChain;
     MasterProcessor* master = nullptr;
+    std::vector<std::vector<int>> levels;     // the tracks in the order they can be rendered: a side-chain key before whoever listens to it
+    int masterKey = -1, masterKeyDelay = 0;
     int dryMixDelay = 0;                      // the dry (track) sum is delayed this much to line up with the returns
     int trackLatency = 0, returnLatency = 0, masterLatency = 0, totalLatency = 0;
 };
@@ -191,9 +194,9 @@ public:
     void prepare (double sampleRate, int maxBlockSize, int numWorkers)
     {
         sr = sampleRate; maxBlock = maxBlockSize;
-        for (auto& t : tw) { t = std::make_unique<TrackWork>(); t->buf.setSize (2, maxBlock); t->pre.setSize (2, maxBlock); t->scratch.setSize (16, maxBlock); t->midi.ensureSize (32768); t->scratchMidi.ensureSize (32768); t->post.prepare(); t->preDelay.prepare(); for (auto& s : t->sendOut) s.reset(); }
+        for (auto& t : tw) { t = std::make_unique<TrackWork>(); t->buf.setSize (2, maxBlock); t->pre.setSize (2, maxBlock); t->scratch.setSize (16, maxBlock); t->midi.ensureSize (32768); t->scratchMidi.ensureSize (32768); t->post.prepare(); t->preDelay.prepare(); t->keyOut.setSize (2, maxBlock); t->keyOut.clear(); for (auto& s : t->sendOut) s.reset(); }
         for (auto& r : rw) { r = std::make_unique<ReturnWork>(); r->buf.setSize (2, maxBlock); r->scratch.setSize (16, maxBlock); r->out.prepare(); }
-        mix.setSize (2, maxBlock); mscratch.setSize (16, maxBlock); dryMix.prepare();
+        mix.setSize (2, maxBlock); mscratch.setSize (16, maxBlock); dryMix.prepare(); masterKeyBuf.setSize (2, maxBlock); masterKeyLine.prepare();
         pool.start (numWorkers);
     }
     void shutdown() { pool.stop(); }
@@ -223,7 +226,8 @@ public:
         epoch.fetch_add (1, std::memory_order_acq_rel);
         const RenderPlan* P = plans.load();
         if (n > maxBlock) return;
-        runStage ((int) P->tracks.size(), [&] (int i) { renderTrack (*P, i, in, n); }, trackStage);
+        if (P->levels.size() <= 1) runStage ((int) P->tracks.size(), [&] (int i) { renderTrack (*P, i, in, n); }, trackStage);
+        else for (const auto& level : P->levels) runStage ((int) level.size(), [&] (int i) { renderTrack (*P, level[(size_t) i], in, n); }, trackStage);
         runStage (kReturns, [&] (int r) { renderReturn (*P, r, n); }, returnStage);
         renderMaster (*P, out, n);
     }
@@ -250,7 +254,7 @@ private:
 
     struct TrackWork
     {
-        juce::AudioBuffer<float> buf, pre, scratch; juce::MidiBuffer midi, scratchMidi;
+        juce::AudioBuffer<float> buf, pre, scratch, keyOut; juce::MidiBuffer midi, scratchMidi;
         StereoDelay post, preDelay;
         std::unique_ptr<juce::AudioBuffer<float>> sendOut[kSends];
         std::unique_ptr<StereoDelay> sendDelay[kSends];
@@ -326,8 +330,10 @@ private:
                 if (k == tp.inputAt)
                 {
                     ts.inputStage.process (buf, n, inDb, inInv, sr);
-                    { const float gr = ts.compStage.process (buf, n, ts.compOn.load(), ts.compThr.load(), ts.compRatio.load(), ts.compRel.load(), ts.compFast.load(), ts.compPeak.load(), ts.compMakeup.load(), sr); if (gr > ts.compGr.load (std::memory_order_relaxed)) ts.compGr.store (gr, std::memory_order_relaxed); }
-                    { const float gg = ts.gateStage.process (buf, n, ts.gateOn.load(), ts.gateExp.load(), ts.gateFast.load(), ts.gateThr.load(), ts.gateRange.load(), ts.gateRel.load(), ts.gateHold.load(), sr); if (gg > ts.gateGr.load (std::memory_order_relaxed)) ts.gateGr.store (gg, std::memory_order_relaxed); }
+                    const juce::AudioBuffer<float>* cKey = tp.compKey >= 0 ? &tw[(size_t) P.tracks[(size_t) tp.compKey].index]->keyOut : nullptr;
+                    const juce::AudioBuffer<float>* gKey = tp.gateKey >= 0 ? &tw[(size_t) P.tracks[(size_t) tp.gateKey].index]->keyOut : nullptr;
+                    { const float gr = ts.compStage.process (buf, n, ts.compOn.load(), ts.compThr.load(), ts.compRatio.load(), ts.compRel.load(), ts.compFast.load(), ts.compPeak.load(), ts.compMakeup.load(), sr, -1.0f, cKey != nullptr ? cKey->getReadPointer (0) : nullptr, cKey != nullptr ? cKey->getReadPointer (1) : nullptr); if (gr > ts.compGr.load (std::memory_order_relaxed)) ts.compGr.store (gr, std::memory_order_relaxed); }
+                    { const float gg = ts.gateStage.process (buf, n, ts.gateOn.load(), ts.gateExp.load(), ts.gateFast.load(), ts.gateThr.load(), ts.gateRange.load(), ts.gateRel.load(), ts.gateHold.load(), sr, gKey != nullptr ? gKey->getReadPointer (0) : nullptr, gKey != nullptr ? gKey->getReadPointer (1) : nullptr); if (gg > ts.gateGr.load (std::memory_order_relaxed)) ts.gateGr.store (gg, std::memory_order_relaxed); }
                     if (ts.blk != nullptr && ts.blk->playing && ts.blk->numSegs > 0) { const auto* eas = ts.autoSnap.load(); if (eas != nullptr) for (const auto& lane : eas->lanes) if (lane.kind == kEqLaneKind && lane.on && ! lane.pts.empty()) applyEqLane (ts.eq, ts.eqHpOn, ts.eqHpHz, ts.eqLpOn, ts.eqLpHz, lane.param, autoValueAt (lane, ts.blk->segs[0].startBeat)); }      // EQ sweeps: the EQ lanes, block by block
                     ts.eqStage.process (buf, n, ts.eqHpOn.load(), ts.eqHpHz.load(), ts.eqLpOn.load(), ts.eqLpHz.load(), sr);
                     ts.paraEq.process (buf, n, ts.eq, sr); ts.eq.feed (buf, n);
@@ -336,6 +342,7 @@ private:
             }
         }
         tp.ts->widthStage.process (buf, n, tp.ts->width.load(), sr);                                    // the channel's width: after its effects, before the sends tap and the pan
+        if (tp.isKey) for (int c = 0; c < 2; ++c) juce::FloatVectorOperations::copy (w.keyOut.getWritePointer (c), buf.getReadPointer (c), n);      // the key: after the effects, before the fader, so a muted track still keys
         if (tp.anyPre) { auto pre = view (w.pre, 2, n); juce::FloatVectorOperations::copy (pre.getWritePointer (0), buf.getReadPointer (0), n); juce::FloatVectorOperations::copy (pre.getWritePointer (1), buf.getReadPointer (1), n); }
         juce::MidiBuffer none;
         tp.ts->stripProc->processBlock (buf, none);
@@ -394,7 +401,17 @@ private:
             }
         juce::MidiBuffer none;
         for (const auto& ins : P.masterChain) runInsert (ins, m, none, mscratch, mscratchMidi, n);
-        if (P.master != nullptr) P.master->processBlock (m, none);
+        if (P.master != nullptr)
+        {
+            P.master->keyL = P.master->keyR = nullptr;
+            if (P.masterKey >= 0)      // the master compressor's key, lined up with the mix
+            {
+                auto k = view (masterKeyBuf, 2, n); const auto& src = tw[(size_t) P.tracks[(size_t) P.masterKey].index]->keyOut;
+                for (int c = 0; c < 2; ++c) juce::FloatVectorOperations::copy (k.getWritePointer (c), src.getReadPointer (c), n);
+                masterKeyLine.setDelay (P.masterKeyDelay); masterKeyLine.process (k, n); P.master->keyL = k.getReadPointer (0); P.master->keyR = k.getReadPointer (1);
+            }
+            P.master->processBlock (m, none);
+        }
         for (int ch = 0; ch < out.getNumChannels(); ++ch) juce::FloatVectorOperations::copy (out.getWritePointer (ch), m.getReadPointer (juce::jmin (ch, 1)), n);
     }
 
@@ -402,7 +419,7 @@ private:
     Snapshot<RenderPlan> plans { std::make_unique<RenderPlan>() };
     std::array<std::unique_ptr<TrackWork>, kTracks> tw;
     std::array<std::unique_ptr<ReturnWork>, kReturns> rw;
-    juce::AudioBuffer<float> mix, mscratch; juce::MidiBuffer mscratchMidi; StereoDelay dryMix;
+    juce::AudioBuffer<float> mix, mscratch, masterKeyBuf; juce::MidiBuffer mscratchMidi; StereoDelay dryMix, masterKeyLine;
     WorkerPool pool;
 };
 
