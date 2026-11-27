@@ -441,6 +441,7 @@ struct Slot
     std::atomic<juce::AudioProcessorParameter*> patBank { nullptr }, patLink { nullptr };      // a self-sequencing plug-in's pattern and link controls (found by name from the message thread), set by pattern blocks; they live and die with the plug-in
     std::atomic<juce::AudioProcessorParameter*> patSub { nullptr };                            // a plug-in that splits its pattern over two controls (Archie Drums: "Pattern" A-D and "Bank" 1-4): patBank is the letter, patSub the number
     std::atomic<float> inPk { 0.0f }, outPk { 0.0f };    // the loudest sample into and out of this device since the console last asked (audio thread writes, the 30 Hz meter reads and clears)
+    std::atomic<bool> broken { false }; int cleanBlocks = 0;      // BROKEN AUDIO: set by the audio thread while this device is sending sound that is not a number (or absurdly loud) and is being muted for it; cleared after a good run of normal blocks
     std::atomic<bool> patChecked { false }; std::atomic<int> patApplied { -1 };                // (patApplied: set by the audio thread)
     // The pattern as ONE number 0..N-1 (A1 = 0, A2 = 1 ... D4 = 15), whichever way the plug-in holds it: a single stepped control, or letter and number controls
     int patTotal() const

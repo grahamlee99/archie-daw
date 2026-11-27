@@ -75,17 +75,34 @@ public:
     }
     void start()
     {
-        auto err = deviceManager.initialiseWithDefaultDevices (2, 2);
+        const auto saved = juce::XmlDocument::parse (deviceFile());      // the sound card chosen last time (a card that is not there any more falls back to the usual one)
+        auto err = saved != nullptr ? deviceManager.initialise (2, 2, saved.get(), true) : deviceManager.initialiseWithDefaultDevices (2, 2);
         lastDeviceError = err;
         enableAllInputs();
+        const auto midi = juce::JSON::parse (midiFile().loadFileAsString());
+        if (auto* off = midi.getProperty ("off", {}).getArray()) for (const auto& v : *off) disabledMidiIns.addIfNotAlreadyThere (v.toString());
+        if (const auto out = midi.getProperty ("out", {}).toString(); out.isNotEmpty()) openMidiOutput (out);
+        devicesLoaded = true;
         buildMixer();
         deviceManager.addAudioCallback (this);
         refreshMidiInputs(); updateTargets();
     }
 
+    static juce::String settingsSuffix() { return juce::SystemStats::getEnvironmentVariable ("ASKARCHIE_HOST_TEST", {}) == "1" ? "-test" : ""; }      // a test copy never changes the person's own choices
+    juce::File deviceFile() const { return settingsDir.getChildFile ("audio-device" + settingsSuffix() + ".xml"); }
+    juce::File midiFile() const { return settingsDir.getChildFile ("midi-devices" + settingsSuffix() + ".json"); }
+    bool devicesLoaded = false;      // only a program that read the choices may write them
+    void saveDeviceChoices()
+    {
+        if (! devicesLoaded) return;
+        if (auto xml = deviceManager.createStateXml()) { const auto text = xml->toString(); if (deviceFile().loadFileAsString() != text) { settingsDir.createDirectory(); deviceFile().replaceWithText (text); } }
+        auto* o = new juce::DynamicObject(); juce::Array<juce::var> off; for (const auto& id : disabledMidiIns) off.add (id); o->setProperty ("off", off); o->setProperty ("out", midiOutId);
+        const auto text = juce::JSON::toString (juce::var (o)); if (midiFile().loadFileAsString() != text) { settingsDir.createDirectory(); midiFile().replaceWithText (text); }
+    }
     void shutdown()
     {
         if (shutDown) return;
+        saveDeviceChoices();
         shutDown = true;
         warpCancel.store (true); warpPool.removeAllJobs (true, 3000);
         scanThread.reset(); analysisThread.reset();
@@ -826,6 +843,37 @@ public:
             const auto& ps = t->slots[(size_t) p.slot]->proc->getParameters(); if (p.param < 0 || p.param >= ps.size()) continue;
             ps[p.param]->setValueNotifyingHost (p.v);
         }
+    }
+    // A plug-in's PLACE in its rack is how its automation lanes (kind 2) and its controller assignments name it. When plug-ins move or go, those names move with them.
+    struct SlotKit { bool taken = false; std::vector<AutoLane> lanes; std::vector<RemoteMap> maps; };
+    SlotKit copySlotKit (int chain, int slot)
+    {
+        SlotKit k; k.taken = true; if (auto* t = chainAt (chain)) for (const auto& l : t->autoSnap.load()->lanes) if (l.kind == 2 && l.slot == slot) k.lanes.push_back (l);
+        const juce::SpinLock::ScopedLockType lk (remoteLock); for (const auto& r : remotes) if (r.chain == chain && r.slot == slot) k.maps.push_back (r);
+        return k;
+    }
+    // to(old place) = its new place, or -1 when that plug-in is gone
+    void remapSlots (int chain, const std::function<int (int)>& to)
+    {
+        if (auto* t = chainAt (chain))
+        {
+            auto set = std::make_shared<AutoSet> (*t->autoSnap.load()); bool changed = false;
+            for (auto it = set->lanes.begin(); it != set->lanes.end();)
+            {
+                if (it->kind != 2) { ++it; continue; }
+                const int n = to (it->slot); if (n != it->slot) changed = true;
+                if (n < 0) it = set->lanes.erase (it); else { it->slot = n; ++it; }
+            }
+            if (changed) putAuto (chain, set);
+        }
+        const juce::SpinLock::ScopedLockType lk (remoteLock);
+        for (auto it = remotes.begin(); it != remotes.end();) { if (it->chain != chain) { ++it; continue; } const int n = to (it->slot); if (n < 0) it = remotes.erase (it); else { it->slot = n; ++it; } }
+        remotePend.erase (std::remove_if (remotePend.begin(), remotePend.end(), [chain] (const RemotePend& p) { return p.chain == chain; }), remotePend.end());
+    }
+    void putSlotKit (int chain, int slot, const SlotKit& k)
+    {
+        if (auto* t = chainAt (chain); t != nullptr && ! k.lanes.empty()) { auto set = std::make_shared<AutoSet> (*t->autoSnap.load()); for (auto l : k.lanes) { l.slot = slot; set->lanes.push_back (l); } putAuto (chain, set); }
+        const juce::SpinLock::ScopedLockType lk (remoteLock); for (auto r : k.maps) { r.chain = chain; r.slot = slot; remotes.push_back (r); }
     }
     int remoteCount (int chain) { const juce::SpinLock::ScopedLockType l (remoteLock); int n = 0; for (const auto& r : remotes) if (r.chain == chain) ++n; return n; }
     juce::var remotesVar (int chain)
@@ -2366,7 +2414,7 @@ public:
     }
 
     // tracks
-    struct PlugSnap { juce::PluginDescription desc; juce::String state; bool bypass = false; bool internal = false; };
+    struct PlugSnap { juce::PluginDescription desc; juce::String state; bool bypass = false; bool internal = false; SlotKit kit; };
     struct TrackSnap
     {
         juce::String name, filePath; int colour = -1; int source = 0; int uid = 0, compKey = 0, gateKey = 0, outTo = 0, parallelFrom = 0, kind = 0; float gainDb = 0, pan = 0; bool mute = false, solo = false;
@@ -2380,6 +2428,7 @@ public:
         auto& s = *t->slots[(size_t) slot];
         out.desc = s.desc; out.bypass = s.bypass.load(); out.internal = s.desc.pluginFormatName == "Internal";
         juce::MemoryBlock mb; s.proc->getStateInformation (mb); out.state = mb.toBase64Encoding();
+        out.kit = copySlotKit (chain, slot);
         return true;
     }
     // loads a plug-in onto a chain and puts it back at its old place with its old setting; `then` runs when it is in (or failed)
@@ -2393,6 +2442,7 @@ public:
                     const int last = (int) t->slots.size() - 1, to = juce::jlimit (0, last, slot);
                     if (to < last) std::rotate (t->slots.begin() + to, t->slots.end() - 1, t->slots.end());
                     t->slots[(size_t) to]->bypass.store (sn->bypass);
+                    if (sn->kit.taken) { remapSlots (chain, [to] (int s) { return s >= to ? s + 1 : s; }); putSlotKit (chain, to, sn->kit); }
                     publishPlan(); stateDirty.store (true);
                 }
             if (then) then();
@@ -2503,7 +2553,7 @@ public:
         { const juce::SpinLock::ScopedLockType l (remoteLock); for (const auto& r : remotes) if (r.chain == idx) sn->maps.push_back (r); }
         for (int s = 0; s < kSends; ++s) { sn->sendDb[s] = t.sendDb[s].load(); sn->sendLvl[s] = t.sendLvl[s].load(); sn->sendOn[s] = t.sendOn[s].load(); sn->sendPre[s] = t.sendPre[s].load(); }
         bool restorable = true;
-        for (int i = 0; i < (int) t.slots.size(); ++i) { auto p = std::make_shared<PlugSnap>(); snapSlot (idx, i, *p); restorable = restorable && ! p->internal; sn->plugs.push_back (p); }
+        for (int i = 0; i < (int) t.slots.size(); ++i) { auto p = std::make_shared<PlugSnap>(); snapSlot (idx, i, *p); restorable = restorable && ! p->internal; p->kit = {}; sn->plugs.push_back (p); }
         if (idx != n - 1) moveTrackTo (idx, n - 1);
         if (! removeLastTrack()) return false;
         if (! restorable) { undo.clear(); return true; }       // a built-in device cannot be rebuilt from a note: the history is no longer trustworthy
@@ -2560,13 +2610,17 @@ public:
             if (to == from) return from;
             if (from < to) std::rotate (a->slots.begin() + from, a->slots.begin() + from + 1, a->slots.begin() + to + 1);
             else           std::rotate (a->slots.begin() + to, a->slots.begin() + from, a->slots.begin() + from + 1);
+            remapSlots (fromChain, [from, to] (int s) { return s == from ? to : (from < to && s > from && s <= to) ? s - 1 : (from > to && s >= to && s < from) ? s + 1 : s; });
         }
         else
         {
             to = juce::jlimit (0, (int) b->slots.size(), to);
+            const auto kit = copySlotKit (fromChain, from);
             auto s = std::move (a->slots[(size_t) from]);
             a->slots.erase (a->slots.begin() + from);
             b->slots.insert (b->slots.begin() + to, std::move (s));
+            remapSlots (fromChain, [from] (int s2) { return s2 == from ? -1 : s2 > from ? s2 - 1 : s2; });
+            remapSlots (toChain, [to] (int s2) { return s2 >= to ? s2 + 1 : s2; }); putSlotKit (toChain, to, kit);
         }
         publishPlan(); stateDirty.store (true);
         return to;
@@ -2956,6 +3010,7 @@ public:
         auto gone = std::move (t->slots[(size_t) slot]);
         gone->window.reset();
         t->slots.erase (t->slots.begin() + slot);
+        remapSlots (track, [slot] (int s) { return s == slot ? -1 : s > slot ? s - 1 : s; });
         publishPlan(); quiesce();          // the plan without it is live, and the audio thread has moved on, before it is destroyed
         gone.reset();
         stateDirty.store (true);
@@ -2967,6 +3022,7 @@ public:
         const int j = slot + dir;
         if (t == nullptr || slot < 0 || j < 0 || slot >= (int) t->slots.size() || j >= (int) t->slots.size()) return;
         std::swap (t->slots[(size_t) slot], t->slots[(size_t) j]);
+        remapSlots (track, [slot, j] (int s) { return s == slot ? j : s == j ? slot : s; });
         publishPlan(); stateDirty.store (true);
     }
 
@@ -3250,6 +3306,14 @@ public:
             for (size_t ri = 0; ri < returns.size(); ++ri) sp->setProperty (juce::String (100 + (int) ri), chainPk (*returns[ri]));
             if (masterChain != nullptr) sp->setProperty ("200", chainPk (*masterChain));
             o->setProperty ("slotPk", juce::var (sp));
+        }
+        {   // devices being muted for sending broken audio (the guard in Renderer::runInsert): [{ chain, slot, name }]
+            juce::Array<juce::var> bad;
+            auto look = [&bad] (TrackState& t, int chain) { for (size_t k = 0; k < t.slots.size(); ++k) if (t.slots[k] != nullptr && t.slots[k]->broken.load (std::memory_order_relaxed)) { auto* b = new juce::DynamicObject(); b->setProperty ("chain", chain); b->setProperty ("slot", (int) k); b->setProperty ("name", t.slots[k]->desc.name); bad.add (juce::var (b)); } };
+            for (int ti = 0; ti < trackCount.load(); ++ti) look (*tracks[(size_t) ti], ti);
+            for (size_t ri = 0; ri < returns.size(); ++ri) look (*returns[ri], 100 + (int) ri);
+            if (masterChain != nullptr) look (*masterChain, 200);
+            o->setProperty ("broken", bad);
         }
         o->setProperty ("mgr", master != nullptr ? (double) master->cGr.exchange (0.0f) : 0.0);
         o->setProperty ("amGr", master != nullptr ? (double) master->amGr.exchange (0.0f) : 0.0);          // the Archie sound limiter: dB turned down

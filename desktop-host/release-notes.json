@@ -2,6 +2,30 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.159",
+      "date": "2026-11-27",
+      "title": "One plug-in can no longer silence the song",
+      "notes": [
+        "If a plug-in sends broken audio, Archie DAW now mutes that plug-in, tells you which one it is and keeps everything else playing. Before, the whole mix could go silent until the program was restarted.",
+        "This version also includes everything listed under 0.1.158, which was not offered for download on its own.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
+      "version": "0.1.158",
+      "date": "2026-11-26",
+      "title": "Never lose work",
+      "notes": [
+        "Closing the program, starting a new song or opening another one now asks whether to save, when something has changed.",
+        "A song that opens with a plug-in or sound missing is never written over: saving asks for another name, so the original stays as it was.",
+        "Each time you save over a song, the previous version is kept in an Archie backups folder beside it (the last ten).",
+        "Your sound card and MIDI choices are remembered.",
+        "Automation lanes and controller assignments now stay with their plug-in when you move or remove plug-ins.",
+        "In the step grid, pressing a square changes only that square; other notes keep their timing, length and channel.",
+        "An export now warns you if a plug-in or sound could not be loaded and so is not in the file."
+      ]
+    },
+    {
       "version": "0.1.157",
       "date": "2026-11-26",
       "title": "New song starts clean",

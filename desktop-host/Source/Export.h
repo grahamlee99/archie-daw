@@ -74,6 +74,9 @@ private:
         copy->applyWarpResults();
         if (copy->warpBusy()) { emit (status ("preparing the stretched sounds...", 0.02)); return; }
         stopTimer();
+        for (int i = 0; i < copy->trackCount.load(); ++i) if (auto* tt = copy->trackAt (i)) for (auto& s : tt->slots) s->proc->setNonRealtime (true);
+        for (int c : { kMasterChain }) if (auto* tt = copy->chainAt (c)) for (auto& s : tt->slots) s->proc->setNonRealtime (true);
+        for (int r = 0; r < kReturns; ++r) if (auto* tt = copy->chainAt (kReturnBase + r)) for (auto& s : tt->slots) s->proc->setNonRealtime (true);
         const double songEnd = songEndBeat (*copy);
         a = from >= 0.0 ? from : 0.0; b = to >= 0.0 ? to : songEnd;
         if (b <= a + 1.0e-6) { finish ("There is nothing to export: the song is empty.", {}); return; }
@@ -104,6 +107,7 @@ private:
         juce::MessageManager::callAsync ([this, error, result]
         {
             auto* o = new juce::DynamicObject(); o->setProperty ("state", error.isEmpty() ? "done" : "error"); o->setProperty ("progress", 1.0); o->setProperty ("text", error);
+            if (error.isEmpty() && loadError.isNotEmpty()) o->setProperty ("missing", loadError);      // the file was written, but not everything in the song is in it
             if (result.isObject()) { o->setProperty ("file", result.getProperty ("file", {})); o->setProperty ("seconds", result.getProperty ("seconds", 0.0)); o->setProperty ("peakDb", result.getProperty ("peakDb", -200.0)); o->setProperty ("clipped", result.getProperty ("clipped", false)); }
             finished.store (true); emit (juce::var (o));
         });

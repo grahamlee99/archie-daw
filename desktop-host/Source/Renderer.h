@@ -264,6 +264,13 @@ private:
 
     static juce::AudioBuffer<float> view (juce::AudioBuffer<float>& b, int channels, int n) { return juce::AudioBuffer<float> (b.getArrayOfWritePointers(), channels, n); }
 
+    // true when any sample is NaN, infinite or louder than 1000 (tested on the bits, so no compiler setting can optimise the NaN test away)
+    static bool audioIsBroken (const float* x, int n)
+    {
+        juce::uint32 worst = 0; for (int i = 0; i < n; ++i) { juce::uint32 bits; std::memcpy (&bits, x + i, sizeof (bits)); worst = juce::jmax (worst, bits & 0x7fffffffu); }
+        return worst > 0x447a0000u;      // 1000.0f
+    }
+
     // one hosted processor in a chain. Channel rules (the same the graph used): a stereo-in plug-in gets L/R; a mono-in one gets L+R; one with no input gets silence and its output replaces the signal;
     // a mono-out one is copied to both sides; one with no output leaves the signal untouched (an analyser, say).
     static void runInsert (const PlugRef& ref, juce::AudioBuffer<float>& buf, const juce::MidiBuffer& midiIn, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& scratchMidi, int n)
@@ -283,6 +290,19 @@ private:
         if (ref.slot != nullptr && nIn > 0) { const float pk = peakOf (scratch.getReadPointer (0), nIn >= 2 ? scratch.getReadPointer (1) : nullptr); if (pk > ref.slot->inPk.load (std::memory_order_relaxed)) ref.slot->inPk.store (pk, std::memory_order_relaxed); }      // the level INTO the device (an instrument has no input)
         juce::AudioBuffer<float> v (scratch.getArrayOfWritePointers(), ch, n);
         p->processBlock (v, scratchMidi);
+        // FILTERING/MONITORING MECHANISM: the broken-audio guard. It looks at every sample a hosted device sends out and mutes that device's block when any sample is not a number, infinite, or beyond 1000 times
+        // full scale (+60 dB): one such sample would otherwise stay in the mixer's filters and silence the whole mix. It does NOT judge loudness, clipping or how anything sounds below that limit, and it never
+        // changes a sample of a healthy block. The limit is audioIsBroken()'s; the report to the person is Slot::broken (read by Engine::meters), and the device is reset once when the fault begins.
+        if (nOut > 0)
+        {
+            bool bad = false; for (int c = 0; c < juce::jmin (2, nOut) && ! bad; ++c) bad = audioIsBroken (scratch.getReadPointer (c), n);
+            if (bad) for (int c = 0; c < ch; ++c) juce::FloatVectorOperations::clear (scratch.getWritePointer (c), n);
+            if (ref.slot != nullptr)
+            {
+                if (bad) { ref.slot->cleanBlocks = 0; if (! ref.slot->broken.exchange (true, std::memory_order_relaxed)) p->reset(); }
+                else if (ref.slot->broken.load (std::memory_order_relaxed) && ++ref.slot->cleanBlocks > 400) ref.slot->broken.store (false, std::memory_order_relaxed);
+            }
+        }
         if (ref.slot != nullptr && nOut > 0) { const float pk = peakOf (scratch.getReadPointer (0), nOut >= 2 ? scratch.getReadPointer (1) : nullptr); if (pk > ref.slot->outPk.load (std::memory_order_relaxed)) ref.slot->outPk.store (pk, std::memory_order_relaxed); }      // and OUT of it
         if (nOut >= 2) { juce::FloatVectorOperations::copy (buf.getWritePointer (0), scratch.getReadPointer (0), n); juce::FloatVectorOperations::copy (buf.getWritePointer (1), scratch.getReadPointer (1), n); }
         else if (nOut == 1) { juce::FloatVectorOperations::copy (buf.getWritePointer (0), scratch.getReadPointer (0), n); juce::FloatVectorOperations::copy (buf.getWritePointer (1), scratch.getReadPointer (0), n); }

@@ -1018,7 +1018,7 @@
     else if (ev.type === "export") {
       var d = ev.data || {};
       if (d.state === "working") { var pct = Math.round((d.progress || 0) * 100); $("tapInfo").textContent = "exporting " + pct + "%"; if (!S.expLogged) { S.expLogged = true; log("Exporting audio: " + (d.text || "") + " (the song keeps playing normally; this runs on a copy)"); } }
-      else { S.expLogged = false; $("tapInfo").textContent = ""; if (d.state === "done") log("Exported " + (Math.round(d.seconds * 10) / 10) + " s to " + d.file + " (peak " + (Math.round(d.peakDb * 10) / 10) + " dB" + (d.clipped ? ", it clips: turn the master down" : "") + ")", !!d.clipped); else log("Export: " + (d.text || "failed"), true); }
+      else { S.expLogged = false; $("tapInfo").textContent = ""; if (d.state === "done") log("Exported " + (Math.round(d.seconds * 10) / 10) + " s to " + d.file + " (peak " + (Math.round(d.peakDb * 10) / 10) + " dB" + (d.clipped ? ", it clips: turn the master down" : "") + ")", !!d.clipped); else log("Export: " + (d.text || "failed"), true); if (d.state === "done" && d.missing) { log("This export is missing part of the song: " + d.missing, true); infoBox("The file was written, but part of the song is NOT in it:\n\n" + d.missing); } }
     }
     else if (ev.type === "bounce") { var bd = ev.data || {}; log("Bounce: " + (bd.text || bd.state) + (bd.file ? " (" + bd.file + ")" : ""), bd.state === "error"); if (typeof refresh === "function") refresh(); }
     else if (ev.type === "channel") { var cd = ev.data || {}; log("Channel: " + (cd.text || cd.state), cd.state === "error"); }
@@ -1086,8 +1086,24 @@
       var fd = box.closest(".mx-fader"), fv = fd && fd.nextElementSibling; if (fv && fv.classList.contains("mx-fv")) fv.classList.toggle("over", !!fd.querySelector(".vmeter.clip"));      // the level readout under the fader says CLIP too
     });
   }
+  // A device the host is muting for sending broken audio: said once, in the log and in a bar that stays until it is closed (it does not stop the music or ask anything)
+  var BROKEN = {};
+  function brokenNotice(list) {
+    var now = {};
+    (list || []).forEach(function (b) {
+      var key = b.chain + ":" + b.slot + ":" + b.name; now[key] = 1; if (BROKEN[key]) return;
+      var where = b.chain === 200 ? "the master section" : b.chain >= 100 ? "FX return " + (b.chain - 99) : "track " + (b.chain + 1);
+      var msg = (b.name || "A plug-in") + " on " + where + " sent broken audio, so Archie DAW has muted it. Everything else keeps playing. To get it back, change the setting that did it, then remove it and add it again.";
+      log(msg, true);
+      var bar = $("brokenBar");
+      if (!bar) { bar = document.createElement("div"); bar.id = "brokenBar"; bar.style.cssText = "position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:9999;max-width:80vw;background:var(--panel,#222);color:var(--text,#fff);border:2px solid #e0433a;border-radius:6px;padding:8px 12px;display:flex;gap:12px;align-items:center;cursor:default"; bar.appendChild(document.createElement("span")); var x = document.createElement("button"); x.textContent = "Close"; x.onclick = function () { bar.remove(); }; bar.appendChild(x); document.body.appendChild(bar); }
+      bar.firstChild.textContent = msg;
+    });
+    BROKEN = now;
+  }
   function drawMeters(m) {
     if (!m) return;
+    if (!DOCK) brokenNotice(m.broken);
     if (document.body.classList.contains("eqmode")) eqClipCheck(m);
     (m.tracks || []).forEach(function (p, i) { var l = $("mL" + i), r = $("mR" + i); if (l) l.style.width = dbToPct(p[0]) + "%"; if (r) r.style.width = dbToPct(p[1]) + "%"; var vl = $("vmL" + i), vr = $("vmR" + i); if (vl) vl.style.height = dbToPct(p[0]) + "%"; if (vr) vr.style.height = dbToPct(p[1]) + "%"; });
     if (m.amGr !== undefined) { var ag = $("agrm"); if (ag) ag.style.width = Math.min(100, m.amGr / 6 * 100) + "%"; }
@@ -2029,7 +2045,7 @@
         var c = a.contents.filter(function (x) { return x.id === inst.contentId; })[0];
         S.stepAudio = !!(c && c.audio);
         if (c && c.audio) { S.stepContent = null; steps = []; }
-        else if (c) { S.stepContent = c.id; S.stepLen = c.lengthBeats; c.notes.forEach(function (n) { steps.push({ step: Math.round(n.beat * 4), note: n.note, len: n.len, vel: n.vel }); }); }
+        else if (c) { S.stepContent = c.id; S.stepLen = c.lengthBeats; S.stepNotes = c.notes; c.notes.forEach(function (n) { steps.push({ step: Math.round(n.beat * 4), note: n.note, len: n.len, vel: n.vel }); }); }
       }
       S.clip[S.sel] = steps; drawSteps();
     });
@@ -2178,11 +2194,11 @@
     "ui.toolSelect": function () { setTool("select"); }, "ui.toolPencil": function () { setTool("pencil"); }, "ui.toolEraser": function () { setTool("eraser"); }, "ui.toolHand": function () { setTool("hand"); },
     "ui.toolZoom": function () { setTool("zoom"); }, "ui.toolRazor": function () { setTool("razor"); }, "ui.toolListen": function () { setTool("listen"); },
     "ui.tapTempo": function () { $("bTap").click(); },
-    "ui.newProject": function () { confirmBox("Start a new, empty song? Anything in the open song that is not saved is lost.", "New song", function () { host("newProject"); }); },
+    "ui.newProject": function () { host("newProject"); },
     "ui.closeWindow": function () {      // a window of its own closes; in the main window it is the song that closes
       var key = VIEWWIN || (SETWIN ? "settings" : /[?&]eqwin=/.test(location.search) ? "eq" : PANEL ? "panel" : "");
       if (key) { host("closeWindow", { key: key }); return; }
-      confirmBox("Close this song? It becomes a new, empty song, and anything not saved is lost.", "Close song", function () { host("newProject"); });
+      host("newProject");
     },
     "ui.viewSequencer": function () { if (!MAIN) return false; setMode("seq"); closeDock(); qlDraw(); },
     "ui.toggleEditArea": function () { if (!MAIN) return false; toggleDock(); qlDraw(); },
@@ -3579,7 +3595,7 @@
   if (!DOCK) setTimeout(refreshFiles, 1200);
   function recentMenu() {
     var rc = (S.files && S.files.recent) || []; if (!rc.length) return [{ label: "(no recent songs yet)", off: true }];
-    var out = rc.map(function (p) { var nm = p.split(/[\\/]/).pop().replace(/\.archiestudio$/, ""); return { label: nm, hint: p, run: function () { confirmBox("Open " + nm + "? Anything in the open song that is not saved is lost.", "Open", function () { host("openRecent", { path: p }).then(function (r) { if (r && r.ok === false) { log(r.error, true); refreshFiles(); } }); }); } }; });
+    var out = rc.map(function (p) { var nm = p.split(/[\\/]/).pop().replace(/\.archiestudio$/, ""); return { label: nm, hint: p, run: function () { host("openRecent", { path: p }).then(function (r) { if (r && r.ok === false) { log(r.error, true); refreshFiles(); } }); } }; });
     out.push("-", { label: "Clear the List", run: function () { host("clearRecent").then(refreshFiles); } }); return out;
   }
   function templateMenu() {
@@ -3930,7 +3946,11 @@
         var c = +el.getAttribute("data-c"), n = +el.getAttribute("data-n"), a = S.clip[S.sel] = S.clip[S.sel] || [];
         var i = a.findIndex(function (s) { return s.step === c && s.note === n; });
         if (i >= 0) a.splice(i, 1); else { a.push({ step: c, note: n, len: 0.25, vel: 100 }); host("noteOn", { track: S.sel, note: n, vel: 100 }); setTimeout(function () { host("noteOff", { track: S.sel, note: n }); }, 160); }
-        var clip = { lengthBeats: S.stepContent ? S.stepLen : 4, notes: a.map(function (s) { return { beat: s.step / 4, len: s.len || 0.25, note: s.note, vel: s.vel || 100 }; }) };
+        // every other note is sent back exactly as it was (its timing, length, strength and channel); only the square pressed is added or taken away
+        var kept = S.stepContent ? (S.stepNotes || []).slice() : [], here = function (x) { return x.note === n && Math.round(x.beat * 4) === c; };
+        if (i >= 0) kept = kept.filter(function (x) { return !here(x); }); else kept.push({ beat: c / 4, len: 0.25, note: n, vel: 100, ch: 1 });
+        S.stepNotes = kept;
+        var clip = { lengthBeats: S.stepContent ? S.stepLen : 4, notes: kept };
         if (S.stepContent) host("editContent", { contentId: S.stepContent, clip: clip }).then(function () { loadArr(); });
         else host("setClip", { track: S.sel, clip: clip }).then(function () { loadClip(); });
         drawSteps();

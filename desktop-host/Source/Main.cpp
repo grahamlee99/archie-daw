@@ -238,6 +238,7 @@ public:
         engine->startEmpty();                                           // the Transport and the Master only: tracks are dragged in from the browser or added with + Track
         window = std::make_unique<Window> (getApplicationName(), *bridge);
         engine->start();
+        bridge->markClean();
     }
 
     void shutdown() override
@@ -248,7 +249,7 @@ public:
         engine.reset();
     }
 
-    void systemRequestedQuit() override { quit(); }
+    void systemRequestedQuit() override { if (bridge != nullptr && ! headless) bridge->askToKeep ([this] { quit(); }); else quit(); }
     void anotherInstanceStarted (const juce::String&) override { if (window != nullptr) window->toFront (true); }
 
 private:

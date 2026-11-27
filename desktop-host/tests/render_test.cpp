@@ -269,6 +269,35 @@ int main()
           CHECK (wp->calls.load() > 0 && peakOf (b1) > 0.4f, "while one that fits in 16 channels is run as before"); }
     }
 
+    // ---- BROKEN AUDIO: a plug-in that sends non-numbers is muted; it never silences the rest of the mix ----
+    {
+        struct BadProc : TestProc
+        {
+            BadProc() : TestProc (2, 2, 0) {}
+            void reset() override { ++resets; }
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer& m) override { TestProc::processBlock (b, m); if (bad) b.setSample (1, 7, value); }
+            std::atomic<bool> bad { false }; float value = std::numeric_limits<float>::quiet_NaN(); int resets = 0;
+        };
+        for (float value : { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -1.0e20f })
+        {
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.trackAt (0)->source.store (2); e.trackAt (1)->source.store (2);
+            auto pr = std::make_unique<BadProc>(); auto* p = pr.get(); p->value = value; e.addProcessor (0, std::move (pr), "bad one");
+            e.addProcessor (kMasterChain, std::make_unique<TestProc> (2, 2, 0), "after");
+            auto good = run (e, 12, bs);
+            const bool quiet = e.meters().getProperty ("broken", {}).size() == 0;
+            p->bad = true; auto during = run (e, 12, bs);
+            const auto listed = e.meters().getProperty ("broken", {});
+            auto peakOf = [] (const std::vector<float>& v) { float pk = 0; for (size_t i = v.size() / 2; i < v.size(); ++i) pk = std::max (pk, std::abs (v[i])); return pk; };
+            bool finite = true; for (float x : during) if (! std::isfinite (x)) finite = false;
+            CHECK (quiet && std::abs (peakOf (good) - 0.5f) < 2e-3f, "two tones play and no device is reported");
+            CHECK (finite && std::abs (peakOf (during) - 0.25f) < 2e-3f, "a device sending broken audio is muted and the other track still plays");
+            CHECK (listed.size() == 1 && listed[0].getProperty ("name", {}).toString() == "bad one" && (int) listed[0].getProperty ("chain", -1) == 0, "and it is named, with its track");
+            CHECK (p->resets == 1, "and reset once, when the fault begins");
+            p->bad = false; auto after = run (e, 420, bs);
+            CHECK (std::abs (peakOf (after) - 0.5f) < 2e-3f && e.meters().getProperty ("broken", {}).size() == 0, "a device that recovers is heard again and the report clears");
+        }
+    }
+
     // ---- PANIC: a hung note can always be shut down ----
     {
         struct PanicProbe : public juce::AudioProcessor
@@ -2863,6 +2892,22 @@ int main()
         e.undo.redo(); CHECK (e.trackCount.load() == 2 && has (1, -24.0f, 702, 22), "redo removes it again");
         e.undo.undo(); CHECK (e.trackCount.load() == 3 && has (1, -30.0f, 701, 21) && has (2, -24.0f, 702, 22), "and undo brings it back again");
         e.editRemoveTrack (2); e.editAddTrack(); CHECK (clean (2), "the last track too: its place is clean when used again");
+    }
+
+    // ---- automation and controller assignments follow their plug-in ----
+    {
+        HostEngine e; e.prepareOffline (sr, bs, 0); e.startEmpty(); e.addTrack(); e.addTrack();
+        for (const char* n : { "A", "B", "C" }) e.addProcessor (0, std::make_unique<LatProc> (2, 2, 0), n);
+        auto set = std::make_shared<AutoSet>(); for (int s = 0; s < 3; ++s) { AutoLane l; l.id = 800 + s; l.kind = 2; l.slot = s; l.param = 0; set->lanes.push_back (l); } { AutoLane v; v.id = 899; v.kind = 0; set->lanes.push_back (v); } e.putAuto (0, set);
+        { juce::Array<juce::var> rm; for (int s = 0; s < 3; ++s) { auto* o = new juce::DynamicObject(); o->setProperty ("slot", s); o->setProperty ("param", 0); o->setProperty ("cc", 30 + s); rm.add (juce::var (o)); } e.loadRemotesVar (0, juce::var (rm)); }
+        // each plug-in's lane (800 + n) and controller (30 + n) must be wherever that plug-in is
+        auto follows = [&] (int chain) { auto* t = e.chainAt (chain); const auto a = e.autoVar (chain); const auto m = e.remotesVar (chain); for (int s = 0; s < (int) t->slots.size(); ++s) { const int who = t->slots[(size_t) s]->desc.name[0] - 'A'; bool lane = false, map = false; for (int i = 0; i < a.size(); ++i) if ((int) a[i].getProperty ("kind", 0) == 2 && (int) a[i].getProperty ("slot", -1) == s) lane = (int) a[i].getProperty ("id", 0) == 800 + who; for (int i = 0; i < m.size(); ++i) if ((int) m[i].getProperty ("slot", -1) == s) map = (int) m[i].getProperty ("cc", 0) == 30 + who; if (! lane || ! map) return false; } int plug = 0; for (int i = 0; i < a.size(); ++i) if ((int) a[i].getProperty ("kind", 0) == 2) ++plug; return plug == (int) t->slots.size() && m.size() == (int) t->slots.size(); };
+        CHECK (follows (0), "each plug-in starts with its own lane and controller");
+        e.moveSlot (0, 0, 1); CHECK (follows (0), "swapping two plug-ins swaps their lanes and controllers");
+        e.moveSlotRaw (0, 2, 0, 0); CHECK (follows (0), "moving one to the top takes its lane and controller");
+        e.moveSlotRaw (0, 1, 1, 0); CHECK (follows (0) && follows (1), "moving one to another track takes them to that track");
+        e.removePlugin (0, 0); CHECK (follows (0), "removing one takes only its own away");
+        bool volume = false; { const auto a = e.autoVar (0); for (int i = 0; i < a.size(); ++i) volume = volume || (int) a[i].getProperty ("id", 0) == 899; } CHECK (volume, "the track's level lane is untouched");
     }
 
     // ---- CRASH GUARD ----

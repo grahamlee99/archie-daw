@@ -73,6 +73,7 @@ public:
         if (recoveryPending || exportJob != nullptr) return;                   // not while an answer is waiting, nor during an export
         const auto now = juce::Time::currentTimeMillis(); if (now - lastKeep < 60000) return; lastKeep = now;
         recoveryFile.replaceWithText (juce::JSON::toString (engine.saveProject()));
+        engine.saveDeviceChoices();
     }
 
     juce::var getSkin() const { return currentSkin; }
@@ -80,7 +81,67 @@ public:
     juce::var invoke (const juce::String& cmd, const juce::var& p = {}) { return handle (cmd, p); }
     HostEngine& getEngine() { return engine; }
     std::function<void (const juce::var&)> onSkin;     // the window re-colours its own tab bar to match
-    ~Bridge() override { stopTimer(); runningFlag.deleteFile(); }     // a normal quit: the flag goes, so the next start knows it was clean
+    // ---- NEVER LOSE WORK ----
+    // FILTERING/MONITORING MECHANISM: "there are unsaved changes" is judged by comparing the song as it would be saved now with the song as it was last saved or opened. It does not judge what changed or whether it matters:
+    // a plug-in that rewrites its own state by itself also counts, so the worst it does is ask once too often. Adjust in songText() (what counts as the song).
+    juce::String savedText; bool openIncomplete = false, asking = false;
+    juce::String songText() { return juce::JSON::toString (engine.saveProject(), true); }
+    void markClean() { savedText = songText(); }
+    bool isDirty() { return songText() != savedText; }
+    // Runs `then` straight away when nothing would be lost; otherwise asks first. Cancel (or a save that does not happen) runs nothing.
+    void askToKeep (std::function<void()> then)
+    {
+        if (asking) return;
+        if (juce::SystemStats::getEnvironmentVariable ("ASKARCHIE_HOST_TEST", {}) == "1" || ! isDirty()) { then(); return; }
+        asking = true;
+        const auto name = currentProject != juce::File() ? currentProject.getFileNameWithoutExtension() : juce::String ("this new song");
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon).withTitle ("Save your changes?")
+                                          .withMessage ("Save the changes to " + name + " first? If you don't, they are lost.").withButton ("Save").withButton ("Don't save").withButton ("Cancel"),
+                                      [this, then] (int choice)
+                                      {
+                                          asking = false;
+                                          if (choice == 1) saveSong (false, [then] (bool saved) { if (saved) then(); });
+                                          else if (choice == 2) then();
+                                      });
+    }
+    // The file as it was is kept before it is written over: the last ten, in "Archie backups" beside the song.
+    static void keepBackup (const juce::File& f)
+    {
+        if (! f.existsAsFile()) return;
+        const auto dir = f.getParentDirectory().getChildFile ("Archie backups"); if (! dir.createDirectory()) return;
+        const auto stem = f.getFileNameWithoutExtension();
+        f.copyFileTo (dir.getNonexistentChildFile (stem + " " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H%M%S"), f.getFileExtension()));
+        auto old = dir.findChildFiles (juce::File::findFiles, false, stem + " ????-??-?? ??????*" + f.getFileExtension()); old.sort();
+        while (old.size() > 10) { old.getReference (0).deleteFile(); old.remove (0); }
+    }
+    bool writeSong (const juce::File& f)
+    {
+        keepBackup (f);
+        const auto song = engine.saveProject();
+        const bool wrote = f.replaceWithText (juce::JSON::toString (song));
+        if (wrote) { currentProject = f; openIncomplete = false; addRecent (f); savedText = juce::JSON::toString (song, true); }
+        emit (wrote ? "saved" : "error", wrote ? f.getFileName() : "could not write " + f.getFullPathName());
+        return wrote;
+    }
+    // A song that opened with parts missing is never written over: saving it asks for another name.
+    void saveSong (bool as, std::function<void (bool)> done)
+    {
+        if (currentProject != juce::File() && ! as && ! openIncomplete) { const bool ok = writeSong (currentProject); if (done) done (ok); return; }
+        const auto docs = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+        const auto suggest = openIncomplete && currentProject != juce::File() ? currentProject.getSiblingFile (currentProject.getFileNameWithoutExtension() + " (copy).archiestudio") : currentProject != juce::File() ? currentProject : docs.getChildFile ("Archie DAW project.archiestudio");
+        chooser = std::make_shared<juce::FileChooser> (openIncomplete ? "Save as a copy (this song opened with parts missing)" : "Save project", suggest, "*.archiestudio");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting, [this, done] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == juce::File()) { if (done) done (false); return; }
+            if (f.getFileExtension().isEmpty()) f = f.withFileExtension (".archiestudio");
+            if (openIncomplete && f == currentProject) { emit ("error", "Not saved: this song opened with parts missing, so choose another name and the original stays as it is."); if (done) done (false); return; }
+            const bool ok = writeSong (f); if (done) done (ok);
+        });
+    }
+    void newSong() { engine.loadProject (engine.blankProject(), [this] (juce::String) { currentProject = juce::File(); openIncomplete = false; markClean(); emit ("opened", "a new song"); }); }
+
+    ~Bridge() override { stopTimer(); engine.saveDeviceChoices(); runningFlag.deleteFile(); }     // a normal quit: the flag goes, so the next start knows it was clean
 
     void addBrowser (HostBrowser* b) { browsers.addIfNotAlreadyThere (b); }
     void removeBrowser (HostBrowser* b) { browsers.removeFirstMatchingValue (b); }
@@ -595,7 +656,7 @@ private:
         // ---- projects ----
         if (cmd == "newProject")
         {
-            engine.loadProject (engine.blankProject(), [this] (juce::String) { currentProject = juce::File(); emit ("opened", "a new song"); });
+            askToKeep ([this] { newSong(); });
             return ok();
         }
         if (cmd == "getFiles")
@@ -609,13 +670,13 @@ private:
         if (cmd == "openRecent")
         {
             const juce::File f (p.getProperty ("path", {}).toString()); if (! f.existsAsFile() || f.getFileExtension() != ".archiestudio") return fail ("that file is not there any more");
-            openProjectFile (f, false); return ok();
+            askToKeep ([this, f] { openProjectFile (f, false); }); return ok();
         }
         if (cmd == "recoverSession")
         {
             if (! recoveryPending) return fail ("there is nothing to recover");
             recoveryPending = false; auto prev = recoveryFile.getSiblingFile (recoveryFile.getFileNameWithoutExtension() + "-previous.archiestudio"); prev.deleteFile(); recoveryFile.copyFileTo (prev);
-            openProjectFile (prev, true); return ok();
+            askToKeep ([this, prev] { openProjectFile (prev, true, true); }); return ok();
         }
         if (cmd == "dismissRecovery")
         {
@@ -633,30 +694,20 @@ private:
         {
             const auto tn = p.getProperty ("name", {}).toString().retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-") + ".archiestudio";
             auto f = templatesDir().getChildFile (tn); if (! f.existsAsFile()) f = starterDir().getChildFile (tn); if (! f.existsAsFile()) return fail ("no such template");
-            openProjectFile (f, true); return ok();
+            askToKeep ([this, f] { openProjectFile (f, true); }); return ok();
         }
-        if (cmd == "saveProject")
-        {
-            if (currentProject != juce::File() && ! (bool) p.getProperty ("as", false)) { emit (currentProject.replaceWithText (juce::JSON::toString (engine.saveProject())) ? "saved" : "error", currentProject.getFileName()); return ok(); }
-            chooser = std::make_shared<juce::FileChooser> ("Save project", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Archie DAW project.archiestudio"), "*.archiestudio");
-            chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting, [this] (const juce::FileChooser& fc)
-            {
-                auto f = fc.getResult();
-                if (f == juce::File()) return;
-                if (f.getFileExtension().isEmpty()) f = f.withFileExtension (".archiestudio");
-                const bool wrote = f.replaceWithText (juce::JSON::toString (engine.saveProject())); if (wrote) { currentProject = f; addRecent (f); }
-                emit (wrote ? "saved" : "error", f.getFileName());
-            });
-            return ok();
-        }
+        if (cmd == "saveProject") { saveSong ((bool) p.getProperty ("as", false), {}); return ok(); }
         if (cmd == "loadProject")
         {
-            chooser = std::make_shared<juce::FileChooser> ("Open project", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.archiestudio");
-            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+            askToKeep ([this]
             {
-                const auto f = fc.getResult();
-                if (f == juce::File()) return;
-                openProjectFile (f, false);
+                chooser = std::make_shared<juce::FileChooser> ("Open project", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.archiestudio");
+                chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+                {
+                    const auto f = fc.getResult();
+                    if (f == juce::File()) return;
+                    openProjectFile (f, false);
+                });
             });
             return ok();
         }
@@ -782,13 +833,17 @@ private:
         auto list = readRecent(); list.removeString (f.getFullPathName()); list.insert (0, f.getFullPathName()); while (list.size() > 10) list.remove (list.size() - 1);
         juce::Array<juce::var> a; for (auto& s : list) a.add (s); recentList().replaceWithText (juce::JSON::toString (juce::var (a)));
     }
-    void openProjectFile (const juce::File& f, bool asTemplate)
+    void openProjectFile (const juce::File& f, bool asTemplate, bool recovered = false)
     {
         auto parsed = juce::JSON::parse (f.loadFileAsString());
-        engine.loadProject (parsed, [this, f, asTemplate] (juce::String err)
+        if (parsed.getProperty ("format", {}).toString() != "archie-studio-project") { emit ("error", f.getFileName() + " is not an Archie DAW song, or it is damaged. Your open song is as it was."); return; }
+        engine.loadProject (parsed, [this, f, asTemplate, recovered] (juce::String err)
         {
-            if (err.isEmpty() || err.isNotEmpty()) { if (asTemplate) currentProject = juce::File(); else { currentProject = f; addRecent (f); } }
-            emit (err.isEmpty() ? "opened" : "error", err.isEmpty() ? f.getFileName() : err);
+            if (asTemplate) currentProject = juce::File(); else { currentProject = f; addRecent (f); }
+            openIncomplete = err.isNotEmpty() && ! asTemplate;
+            if (recovered) savedText = {}; else markClean();      // a recovered song has not been saved anywhere yet
+            emit ("opened", f.getFileName());
+            if (err.isNotEmpty()) emit ("error", "Some parts of this song are missing: " + err + (asTemplate ? juce::String() : juce::String (". When you save, you will be asked for a new name, so the original stays as it is.")));
         });
     }
     std::unique_ptr<MixdownJob> exportJob;          // an audio export in progress (it works on a private copy of the engine)
