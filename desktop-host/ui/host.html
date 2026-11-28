@@ -401,7 +401,13 @@
   .ctxmenu .it .ar { margin-left:10px; }
   .ctxmenu .sep { height:1px; background:var(--group-border); margin:4px 0; }
   .arr .clip.audio { padding:0; }
-  .arr .clip.pat { background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.12) 0 6px, transparent 6px 12px); border:1px solid var(--text); } .arr .clip.pat .lbl { font:700 12px var(--font); }
+  .arr .clip.pat { padding:0; border:1px solid var(--text); }
+  /* the PATTERN STRIP (as the blocks in Reason): a thin bar along the top naming the pattern; the notes played over the block show underneath it */
+  .arr .clip .pstrip { position:absolute; left:0; right:0; top:0; height:14px; z-index:1; display:flex; align-items:center; background-color:rgba(0,0,0,.5); background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.16) 0 6px, transparent 6px 12px); color:#fff; border-bottom:1px solid rgba(0,0,0,.55); cursor:pointer; }
+  .arr .clip .pstrip .lbl { padding:0 3px 0 10px; font:700 10px/14px var(--font); flex:0 1 auto; min-width:0; }
+  .arr .clip .pstrip .pmenu { flex:0 0 auto; padding:0 6px; font:400 15px/14px var(--font); font-style:normal; }
+  .arr .clip .pstrip .pmenu:hover { background:rgba(255,255,255,.28); }
+  .arr .clip.pat .mn { top:15px; }
   .arr .clip canvas.wf { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
   .arr .clip .lbl { position:relative; z-index:1; padding:5px 10px 0 9px; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; pointer-events:none; }
   .arr .clip .lz { position:absolute; left:0; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(0,0,0,.25); z-index:2; }
@@ -1397,6 +1403,10 @@
       h += '<i style="left:' + (b * PX).toFixed(1) + 'px;width:' + Math.max(2, Math.min(n[1], len - b) * PX - 1).toFixed(1) + 'px;top:' + y.toFixed(1) + '%"></i>';
     });
     return h;
+  }
+  // a pattern block: the strip (its name, and an arrow that lists the patterns) over the notes played on top of the pattern
+  function patStrip(i, len) {
+    return '<div class="pstrip" title="Pattern ' + patName(i.patternBank) + ': double-click for the next pattern, or press the arrow to choose one"><span class="lbl">' + esc(i.label || patName(i.patternBank)) + '</span><i class="pmenu">&#9662;</i></div><div class="mn">' + miniNotes(i, len) + "</div>";
   }
   function renderAll() {
     if (DOCK) { if (S.tr) drawTransport(); return; }
@@ -2902,12 +2912,13 @@
   function patName(k) { return "ABCD".charAt(Math.floor(k / 4) % 4) + (k % 4 + 1); }      // a pattern is a bank letter and a number: A1 to A4, B1 to B4, C1 to C4, D1 to D4
   function patCountOf(ti) { var t = S.state && S.state.tracks && S.state.tracks[ti]; return (t && t.patterns) || 8; }
   function patTrackOfInst(inst) { var r = 0; Object.keys(S.arr).forEach(function (k) { (S.arr[k].instances || []).forEach(function (i) { if (i.id === inst.id) r = +k; }); }); return r; }
-  function setPatternBlock(inst, k) { host("editContent", { contentId: inst.contentId, clip: { lengthBeats: inst.contentLength || 4, patternBank: k, notes: [] } }).then(function (r) { if (r && r.ok === false) log(r.error, true); loadClip(); }); }
+  function setPatternBlock(inst, k) { host("editContent", { contentId: inst.contentId, clip: { lengthBeats: inst.contentLength || 4, patternBank: k } }).then(function (r) { if (r && r.ok === false) log(r.error, true); loadClip(); }); }
+  function patternItems(inst) { var o = []; var cnt = patCountOf(patTrackOfInst(inst)); for (var k = 0; k < cnt; k++) (function (k) { o.push({ label: patName(k), checked: inst.patternBank === k, run: function () { setPatternBlock(inst, k); } }); })(k); return o; }
   function clipMenu(inst) {
     var isA = inst && inst.audio;
     var isPat = !!(inst && inst.patternBank >= 0);
     return [
-      { label: "Pattern (which pattern this block plays)", off: !isPat, sub: function () { var o = []; var cnt = patCountOf(patTrackOfInst(inst)); for (var k = 0; k < cnt; k++) (function (k) { o.push({ label: patName(k), checked: isPat && inst.patternBank === k, run: function () { setPatternBlock(inst, k); } }); })(k); return o; } }, "-",
+      { label: "Pattern (which pattern this block plays)", off: !isPat, sub: function () { return patternItems(inst); } }, "-",
       N("Open In"), { label: "Bounce", sub: function () { return bounceMenu(inst); } }, { label: "Delete Unused Recordings", run: deleteUnusedFlow }, "-",
       { label: inst && inst.muted ? "Unmute Clips" : "Mute Clips", off: !inst, run: function () { host("setInstance", { instance: inst.id, muted: !inst.muted }); } }, { label: "Join Clips", off: !inst, run: function () { host("joinInstance", { instance: inst.id }); } }, { label: "Split Clips at Song Position", cmd: "ui.splitAtPlayhead" }, { label: "Chop Clips to", sub: function () { return chopMenu(inst); } }, { label: "Edit Clip Name", off: !inst, run: function () { renameClip(inst); } }, "-",
       { label: "Copy", cmd: "ui.copy" }, { label: "Paste at Playhead", off: function () { return !S.clipCopy; }, cmd: "ui.paste" }, { label: "Delete", cmd: "ui.delete" }, { label: "Select All Clips", cmd: "ui.selectAll" },
@@ -3613,7 +3624,7 @@
       h += '<div class="lane' + (t.kind === 1 ? " audio" : "") + (ti === S.sel ? " sel" : "") + '" data-lane="' + ti + '" style="' + (colourHex(t.colour) ? "--tc:" + colourHex(t.colour) + ";" : "") + 'width:' + (W + LABEL) + 'px">' + thHtml(t, ti, row.depth) + '<div class="grid" style="background-size:' + (PX * 4) + 'px 100%"></div>';
       a.instances.forEach(function (i) {
         var len = i.length > 0 ? i.length : Math.max(total - i.start, i.contentLength);
-        h += '<div class="clip' + (i.patternBank >= 0 ? " pat" : "") + (i.audio ? " audio" : "") + (sharedCount[i.contentId] > 1 ? " shared" : "") + (i.id === S.selInst ? " on" : "") + (S.multi[i.id] ? " msel" : "") + (i.muted ? " muted" : "") + '" data-i="' + i.id + '" data-t="' + ti + '" style="left:' + (LABEL + i.start * PX) + "px;width:" + Math.max(6, len * PX - 1) + 'px;' + clipStyle(i, t) + '" title="start ' + i.start + ", length " + (i.length || "for ever") + ", " + (i.patternBank >= 0 ? "pattern block: plays pattern " + patName(i.patternBank) + " (double-click or right-click to change it)" : i.audio ? "audio, sound " + (Math.round(i.durationSec * 100) / 100) + " s" : i.noteCount + " notes") + '">' + (i.patternBank >= 0 ? '<span class="lbl">' + esc(i.label || patName(i.patternBank)) + "</span>" : i.audio ? '<canvas class="wf" data-cid="' + i.contentId + '"></canvas><span class="lbl">' + esc(i.label || i.name || "audio") + "</span>" : '<div class="mn">' + miniNotes(i, len) + '</div><span class="lbl">' + (i.label ? esc(i.label) : (i.length > 0 ? "" : "&infin; ") + i.noteCount + " notes") + "</span>") + "<div class='lz'></div><div class='rz'></div></div>";
+        h += '<div class="clip' + (i.patternBank >= 0 ? " pat" : "") + (i.audio ? " audio" : "") + (sharedCount[i.contentId] > 1 ? " shared" : "") + (i.id === S.selInst ? " on" : "") + (S.multi[i.id] ? " msel" : "") + (i.muted ? " muted" : "") + '" data-i="' + i.id + '" data-t="' + ti + '" style="left:' + (LABEL + i.start * PX) + "px;width:" + Math.max(6, len * PX - 1) + 'px;' + clipStyle(i, t) + '" title="start ' + i.start + ", length " + (i.length || "for ever") + ", " + (i.patternBank >= 0 ? "pattern block: plays pattern " + patName(i.patternBank) + ", " + i.noteCount + " notes (change the pattern on the strip at the top; double-click below it for the notes)" : i.audio ? "audio, sound " + (Math.round(i.durationSec * 100) / 100) + " s" : i.noteCount + " notes") + '">' + (i.patternBank >= 0 ? patStrip(i, len) : i.audio ? '<canvas class="wf" data-cid="' + i.contentId + '"></canvas><span class="lbl">' + esc(i.label || i.name || "audio") + "</span>" : '<div class="mn">' + miniNotes(i, len) + '</div><span class="lbl">' + (i.label ? esc(i.label) : (i.length > 0 ? "" : "&infin; ") + i.noteCount + " notes") + "</span>") + "<div class='lz'></div><div class='rz'></div></div>";
       });
       h += "</div>";
       h += autoRowsHtml(ti, W);
@@ -3956,8 +3967,11 @@
   function updateHead() { var hd = $("aHead"); if (hd && S.tr) hd.style.left = (LABEL + (S.tr.beats || 0) * PX) + "px"; updateLoopRegion(); if (R.cid) rollSchedule(); autoSchedule(); }
   function clipDrag(el) {
     var id = +el.getAttribute("data-i"), ti = +el.getAttribute("data-t");
-    el.ondblclick = function (e) { var q = findInst(id); if (q && q.patternBank >= 0) { e.stopPropagation(); setPatternBlock(q, (q.patternBank + 1) % patCountOf(patTrackOfInst(q))); return; } if (q && MAIN) { e.stopPropagation(); showDock(q.audio ? "audio" : "roll"); } };
+    el.ondblclick = function (e) { var q = findInst(id); if (q && q.patternBank >= 0 && e.target.closest(".pstrip")) { e.stopPropagation(); if (!e.target.closest(".pmenu")) setPatternBlock(q, (q.patternBank + 1) % patCountOf(patTrackOfInst(q))); return; } if (q && MAIN) { e.stopPropagation(); showDock(q.audio ? "audio" : "roll"); } };
+    var arrow = el.querySelector(".pmenu");
+    if (arrow) arrow.onclick = function (e) { e.stopPropagation(); var q = findInst(id); if (q) { S.selInst = id; var r = arrow.getBoundingClientRect(); menuAt(patternItems(q), r.left, r.bottom + 2); } };
     el.onmousedown = function (e) {
+      if (e.button === 0 && e.target.closest(".pmenu")) { e.preventDefault(); e.stopPropagation(); return; }      // the arrow lists the patterns; it does not drag the clip
       if (e.button !== 0) return;      // the right button is for box-selecting and Ctrl + right-drag copying (above), not for moving
       e.preventDefault(); e.stopPropagation();
       var inst = findInst(id); if (!inst) return;

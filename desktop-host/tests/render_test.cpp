@@ -1737,6 +1737,39 @@ int main()
             }
             e.transport.stop(); e.service();
         }
+        // NOTES PLAYED OVER PATTERN BLOCKS stay: through another pattern, through note edits, and in the block and bar they were played in
+        {
+            HostEngine e; e.prepareOffline (sr, bs, 0);
+            auto block = [&] (double start, double len, double contentLen, int bank) { auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", contentLen); c->setProperty ("patternBank", bank); return e.editAddInstance (0, start, len, 0.0, juce::var (c), 0); };
+            block (0.0, 16.0, 4.0, 0); block (16.0, 4.0, 4.0, 2);
+            auto& t = *e.trackAt (0);
+            auto play = [&] (double beat, int note) { RecEvent on; on.beat = beat; on.b[0] = 0x90; on.b[1] = (juce::uint8) note; on.b[2] = 100; RecEvent off = on; off.beat = beat + 0.25; off.b[0] = 0x80; off.b[2] = 0; t.pending.push_back (on); t.pending.push_back (off); };
+            auto content = [&] (int i) { return t.arrSnap.load()->insts[(size_t) i].content; };
+            auto set = [&] (int i, std::function<void (juce::DynamicObject&)> fill) { auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", content (i)->lengthBeats); fill (*c); e.editContent (content (i)->id, juce::var (c)); };
+            play (9.0, 36); play (17.0, 38); play (25.0, 40); e.commitRecording (t);
+            CHECK (t.arrSnap.load()->insts.size() == 3, "a take over two blocks and the empty bar after them leaves both blocks and makes one note clip");
+            CHECK (content (0)->patternBank == 0 && content (0)->notes.size() == 1 && std::abs (content (0)->notes[0].beat - 9.0) < 1e-9 && std::abs (content (0)->lengthBeats - 16.0) < 1e-9, "a hit in bar 3 of a block stays in bar 3 and is not repeated on every pass");
+            CHECK (content (1)->patternBank == 2 && content (1)->notes.size() == 1 && content (1)->notes[0].note == 38 && std::abs (content (1)->notes[0].beat - 1.0) < 1e-9, "a hit over the second block stays in the second block");
+            CHECK (content (2)->patternBank < 0 && content (2)->notes.size() == 1 && std::abs (t.arrSnap.load()->insts[2].start - 24.0) < 1e-9 && std::abs (content (2)->notes[0].beat - 1.0) < 1e-9, "a hit where there is no block gets a note clip of its own");
+            set (0, [] (juce::DynamicObject& c) { c.setProperty ("patternBank", 5); });
+            CHECK (content (0)->patternBank == 5 && content (0)->notes.size() == 1 && content (0)->notes[0].note == 36, "choosing another pattern keeps the notes played over the block");
+            set (0, [] (juce::DynamicObject& c) { c.setProperty ("notes", juce::var (juce::Array<juce::var>())); });
+            CHECK (content (0)->patternBank == 5 && content (0)->notes.empty(), "editing the notes (here: deleting them all) leaves it a pattern block");
+            e.undo.undo(); CHECK (content (0)->notes.size() == 1, "and undo brings them back");
+            juce::String err; CHECK (e.editJoinInstance (t.arrSnap.load()->insts[0].id, err) == 0 && err.contains ("same pattern") && t.arrSnap.load()->insts.size() == 3, "blocks with different patterns are not joined");
+            set (0, [] (juce::DynamicObject& c) { c.setProperty ("patternBank", 5); });      // (the undo above also took back the pattern change made moments before: close edits are one step)
+            set (1, [] (juce::DynamicObject& c) { c.setProperty ("patternBank", 5); });
+            const int joined = e.editJoinInstance (t.arrSnap.load()->insts[0].id, err);
+            CHECK (joined != 0 && content (0)->patternBank == 5 && content (0)->notes.size() == 2 && std::abs (content (0)->notes[1].beat - 17.0) < 1e-9, "blocks with the same pattern join into one block holding both blocks' notes");
+        }
+        {   // a block longer than what it holds: what was already repeating still repeats, and the new hit sounds once
+            HostEngine e; e.prepareOffline (sr, bs, 0);
+            auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", 4.0); c->setProperty ("patternBank", 1); juce::Array<juce::var> ns; auto* n = new juce::DynamicObject(); n->setProperty ("beat", 0.5); n->setProperty ("len", 0.25); n->setProperty ("note", 42); ns.add (juce::var (n)); c->setProperty ("notes", ns);
+            e.editAddInstance (0, 4.0, 12.0, 0.0, juce::var (c), 0);
+            auto& t = *e.trackAt (0); RecEvent on; on.beat = 14.0; on.b[0] = 0x90; on.b[1] = 36; on.b[2] = 90; RecEvent off = on; off.beat = 14.25; off.b[0] = 0x80; off.b[2] = 0; t.pending.push_back (on); t.pending.push_back (off); e.commitRecording (t);
+            const auto k = t.arrSnap.load()->insts[0].content; int old = 0, fresh = 0; double at = -1.0; for (const auto& x : k->notes) { if (x.note == 42) ++old; else { ++fresh; at = x.beat; } }
+            CHECK (std::abs (k->lengthBeats - 12.0) < 1e-9 && old == 3 && fresh == 1 && std::abs (at - 10.0) < 1e-9, "the old note still comes round three times and the new one is once, where it was played");
+        }
         // THE EQ PANEL: four parametric bands on every channel and on the master, and a spectrum of the sound after them
         {
             auto rmsOf = [] (const std::vector<float>& v, size_t from) { double s = 0; size_t n = 0; for (size_t i = from; i < v.size(); ++i) { s += (double) v[i] * v[i]; ++n; } return std::sqrt (s / (double) std::max<size_t> (1, n)); };

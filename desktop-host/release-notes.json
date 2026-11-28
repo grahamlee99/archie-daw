@@ -2,6 +2,19 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.161",
+      "date": "2026-11-28",
+      "title": "Notes stay on pattern blocks",
+      "notes": [
+        "Fixed: notes you recorded over a pattern block are now kept when you choose another pattern, whether from the menu, on the block or on the instrument itself. Before, they were removed.",
+        "Pattern blocks now have a strip along the top that names the pattern, with your own notes shown underneath. Double-click the strip for the next pattern, or press its arrow to choose one. Double-click below the strip to edit the notes.",
+        "Editing the notes of a pattern block leaves it a pattern block.",
+        "Recording across several pattern blocks keeps each hit in the block and bar where you played it. Hits played where there is no clip get a note clip of their own.",
+        "Only blocks that play the same pattern can be joined.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.160",
       "date": "2026-11-28",
       "title": "Side-chain any plug-in",

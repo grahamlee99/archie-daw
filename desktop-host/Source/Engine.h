@@ -1601,6 +1601,69 @@ public:
         for (const auto& kv : open) add (kv.second.first, juce::jmax (0.05, now >= kv.second.first ? now - kv.second.first : transport.loopEnd.load() - kv.second.first), kv.second.second);
         return juce::var (out);
     }
+    // RECORDING OVER PATTERN BLOCKS: each hit stays in the block it was played over, at the place it was played. A block's contents are first made as long as the block (repeating what they held, so
+    // nothing that was heard changes), so a new hit sounds once and not on every pass of a shorter loop. Notes played where there is no clip get a note clip of their own.
+    void recordOverBlocks (Insts& ins, const std::vector<NoteEv>& got, const std::vector<CtlEv>& gotC, double bar)
+    {
+        auto owner = [&ins] (double beat)
+        {
+            int other = -1;
+            for (int i = 0; i < (int) ins.size(); ++i)
+            {
+                const auto& in = ins[(size_t) i];
+                if (! in.content || in.content->audio || in.content->lengthBeats <= 0.0 || beat < in.start || (in.length > 0.0 && beat >= in.start + in.length)) continue;
+                if (in.content->patternBank >= 0) return i;
+                if (other < 0) other = i;
+            }
+            return other;
+        };
+        std::map<const Clip*, std::shared_ptr<Clip>> made; std::map<Clip*, std::vector<CtlEv>> moves;
+        auto copyOf = [&] (int i) -> Clip&
+        {
+            const Clip* was = ins[(size_t) i].content.get();
+            auto it = made.find (was); if (it != made.end()) return *it->second;
+            auto c = std::make_shared<Clip> (*was);
+            if (c->patternBank >= 0)
+            {
+                const double L = c->lengthBeats; double need = L;
+                for (const auto& x : ins) if (x.content.get() == was && x.length > 0.0) need = juce::jmax (need, x.offset + x.length);
+                need = juce::jmin (512.0, need);
+                if (need > L + 1.0e-6)
+                {
+                    for (double at = L; at < need - 1.0e-6; at += L)
+                    {
+                        for (auto n : was->notes) { n.beat += at; if (n.beat < need) { n.len = juce::jmin (n.len, need - n.beat); c->notes.push_back (n); } }
+                        for (auto k : was->ctls) { k.beat += at; if (k.beat < need) c->ctls.push_back (k); }
+                    }
+                    c->lengthBeats = need; sortCtls (*c);
+                }
+            }
+            made[was] = c; return *c;
+        };
+        std::vector<NoteEv> loose; std::vector<CtlEv> looseC;
+        for (auto n : got)
+        {
+            const int i = owner (n.beat); if (i < 0) { loose.push_back (n); continue; }
+            auto& c = copyOf (i); const auto& in = ins[(size_t) i];
+            n.beat = std::fmod (juce::jmax (0.0, n.beat - in.start + in.offset), c.lengthBeats); c.notes.push_back (n);
+        }
+        for (auto k : gotC)
+        {
+            const int i = owner (k.beat); if (i < 0) { looseC.push_back (k); continue; }
+            auto& c = copyOf (i); const auto& in = ins[(size_t) i];
+            k.beat = std::fmod (juce::jmax (0.0, k.beat - in.start + in.offset), c.lengthBeats); moves[&c].push_back (k);
+        }
+        for (auto& m : moves) mergeCtls (*m.first, m.second);
+        for (auto& x : ins) { auto it = made.find (x.content.get()); if (it != made.end()) x.content = it->second; }
+        if (loose.empty()) return;
+        double first = loose[0].beat, last = 0.0; for (const auto& n : loose) { first = juce::jmin (first, n.beat); last = juce::jmax (last, n.beat + n.len); }
+        auto c = std::make_shared<Clip>(); c->id = nextContentId.fetch_add (1);
+        ClipInst in; in.id = nextInstanceId.fetch_add (1); in.start = std::floor (first / bar) * bar;
+        c->lengthBeats = juce::jmax (bar, std::ceil ((last - in.start) / bar) * bar); in.length = c->lengthBeats;
+        for (auto n : loose) { n.beat -= in.start; c->notes.push_back (n); }
+        { std::vector<CtlEv> add; for (auto k : looseC) { k.beat -= in.start; if (k.beat >= 0.0 && k.beat < c->lengthBeats) add.push_back (k); } mergeCtls (*c, add); }
+        in.content = c; ins.push_back (in);
+    }
     // atLoopWrap: the loop has just returned to its start. Only the events of the pass that ended are taken (the first event whose beat is earlier than the one before it begins the new pass and stays pending),
     // a note still held at the wrap ends at the end of the loop, and a first take becomes a clip that covers the loop, so later passes are laid over it.
     void commitRecording (TrackState& t, bool atLoopWrap = false)
@@ -1639,7 +1702,8 @@ public:
         // recording goes into the clip instance that is playing where the first note was played (every instance of that content changes with it); otherwise a new clip is made
         int hit = -1;
         for (int i = 0; i < (int) ins->size(); ++i) { const auto& in = (*ins)[(size_t) i]; if (in.content && in.content->lengthBeats > 0.0 && firstBeat >= in.start && (in.length <= 0.0 || firstBeat < in.start + in.length)) { hit = i; break; } }
-        if (hit >= 0)
+        if (hit >= 0 && (*ins)[(size_t) hit].content->patternBank >= 0) recordOverBlocks (*ins, got, gotC, bar);
+        else if (hit >= 0)
         {
             const ClipInst in = (*ins)[(size_t) hit];
             auto c = std::make_shared<Clip> (*in.content);
@@ -2272,6 +2336,7 @@ public:
         const ClipInst b = (*before)[(size_t) nextIdx];
         if (a.length <= 0.0 || b.length <= 0.0 || ! a.content || ! b.content) { err = "a clip that goes on for ever cannot be joined"; return 0; }
         if ((a.content->audio != nullptr) != (b.content->audio != nullptr)) { err = "an audio clip and a note clip cannot be joined"; return 0; }
+        if (a.content->patternBank != b.content->patternBank) { err = "a pattern block can only be joined to a block that plays the same pattern"; return 0; }
         auto ins = std::make_shared<Insts> (*before); ClipInst r = a;
         if (a.content->audio)
         {
@@ -2285,7 +2350,7 @@ public:
             if (a.content == b.content && std::abs (a.start + a.length - b.start) < 0.02 && la > 0.0 && std::abs (std::fmod (a.offset + a.length - b.offset + 2.0 * la, la)) < 0.02) r.length = b.start + b.length - a.start;
             else
             {
-                auto c = std::make_shared<Clip>(); c->id = nextContentId.fetch_add (1); c->lengthBeats = juce::jmax (0.25, b.start + b.length - a.start);
+                auto c = std::make_shared<Clip>(); c->id = nextContentId.fetch_add (1); c->lengthBeats = juce::jmax (0.25, b.start + b.length - a.start); c->patternBank = a.content->patternBank;
                 for (const auto& d : { std::make_pair (a, 0.0), std::make_pair (b, b.start - a.start) })
                 {
                     ClipInst piece = d.first; const double off = d.second; const double L = piece.content->lengthBeats; if (L <= 0.0) continue;
@@ -2362,7 +2427,17 @@ public:
     }
 
     // replace the notes of a clip's CONTENT: every instance of it, on any track, changes together
-    bool editContent (int contentId, const juce::var& clip) { auto old = findContent (contentId); if (old == nullptr || old->audio) return false; auto nc = contentFromVar (clip); nc->id = contentId; if (! clip.hasProperty ("ctls")) { for (const auto& e : old->ctls) if (e.beat < nc->lengthBeats) nc->ctls.push_back (e); } return replaceContent (old, nc, "Edit notes"); }
+    // Whatever the new description does not mention stays as it was: the notes, the wheel and pedal movements, and whether it is a pattern block (and of which pattern). So choosing another pattern
+    // keeps the notes played over the block, and editing those notes leaves it a pattern block.
+    bool editContent (int contentId, const juce::var& clip)
+    {
+        auto old = findContent (contentId); if (old == nullptr || old->audio) return false;
+        auto nc = contentFromVar (clip); nc->id = contentId;
+        if (! clip.hasProperty ("patternBank")) nc->patternBank = old->patternBank;
+        if (! clip.hasProperty ("notes")) for (const auto& e : old->notes) if (e.beat < nc->lengthBeats) nc->notes.push_back (e);
+        if (! clip.hasProperty ("ctls")) for (const auto& e : old->ctls) if (e.beat < nc->lengthBeats) nc->ctls.push_back (e);
+        return replaceContent (old, nc, "Edit notes");
+    }
     // Change a note clip's notes with a function (quantise, transpose...). `label` names the undo step; the same kind of edit within 700 ms (a drag, a held key) is ONE step.
     bool editNotes (int contentId, const std::string& label, const std::function<bool (Clip&)>& change)
     {
