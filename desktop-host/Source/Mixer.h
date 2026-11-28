@@ -17,6 +17,7 @@
 #include <memory>
 #include "Transport.h"
 #include "ArchieLink.h"
+#include "SideChain.h"
 
 namespace archie
 {
@@ -205,6 +206,9 @@ struct GrooveEval
         vel = juce::jlimit (1, 127, (int) std::lround ((double) nt.vel * (1.0 + (double) m.vel / 100.0 * ((double) c->vel / 100.0) * s)));
     }
 };
+// THE SEAM between two pieces of the song. The song is played in pieces that meet end to start; an event is sent by exactly one of them only if both measure the seam with the same tolerance.
+// (Two different tolerances once sent a note on the seam twice, seen at a 32-sample buffer.)
+constexpr double kSeam = 1.0e-9;
 template <typename On, typename Off, typename Chase>
 inline void walkInstance (const ClipInst& in, double b0, double b1, bool chase, On&& on, Off&& off, Chase&& chaseOn, double swingDelay = 0.0, double swingGrid = 0.5, const GrooveEval* gv = nullptr, bool oneShot = false)
 {
@@ -222,13 +226,13 @@ inline void walkInstance (const ClipInst& in, double b0, double b1, bool chase, 
         for (;; ++k)
         {
             const double tOn = base + nb + (double) k * L;
-            if (tOn >= b1 - 1.0e-12 || tOn >= we) break;
+            if (tOn >= b1 - kSeam || tOn >= we) break;             // (what is on the far seam belongs to the next piece)
             if (tOn < ws - 1.0e-9) continue;                       // before the instance begins (the part of the content that the offset skips)
             if (oneShot && tOn >= base + L - 1.0e-9) break;        // ONE SHOT: the content plays once, from the clip's start, and is then silent for the rest of the clip
             const double tOff = juce::jmin (tOn + len, we);
-            if (tOn >= b0 - 1.0e-9) on (nt, tOn);
+            if (tOn >= b0 - kSeam) on (nt, tOn);
             else if (chase && tOff > b0 + 1.0e-9) chaseOn (nt);
-            if (tOff >= b0 - 1.0e-9 && tOff < b1 - 1.0e-12 && tOff > tOn) off (nt, tOff);
+            if (tOff >= b0 - kSeam && tOff < b1 - kSeam && tOff > tOn) off (nt, tOff);
         }
     }
 }
@@ -242,7 +246,7 @@ inline void walkCtls (const ClipInst& in, double b0, double b1, Fn&& fn, bool on
     for (int k = juce::jmax (0, (int) std::floor ((from - base) / L)); base + (double) k * L < to; ++k)
     {
         if (oneShot && k > 0) break;
-        for (const auto& e : c->ctls) { const double t = base + e.beat + (double) k * L; if (t >= from - 1.0e-9 && t < to - 1.0e-12) fn (e, t); }
+        for (const auto& e : c->ctls) { const double t = base + e.beat + (double) k * L; if (t >= from - kSeam && t < to - kSeam) fn (e, t); }
     }
 }
 // What every controller should be at beat `beat` according to the clips playing there: want[channel][slot], -1 where no clip has said anything yet.
@@ -305,6 +309,54 @@ private:
     Cell cells[kSize];
     std::atomic<size_t> head { 0 }, tail { 0 };
 };
+// WHICH KEYS A TRACK IS HOLDING from live playing, and what could not be queued. It exists so that a key let go always reaches the track that heard it pressed (even after another track is selected),
+// and so that a full queue never loses a release: a note-off, a pedal release or a pitch wheel position that does not fit is kept here and sent by the audio thread at the end of its block.
+// FILTERING/MONITORING MECHANISM: it watches live MIDI note, pedal (controller 64), all-notes-off and pitch wheel messages per track; it judges nothing about what is played, and the only thing it ever
+// adds to the stream is a release or wheel position the queue had no room for. `lost` counts the messages that did not fit (the console says so). Adjust: the queue's size is MidiFifo::kSize.
+struct LiveKeys
+{
+    std::atomic<std::uint64_t> down[16][2], late[16][2];
+    std::atomic<std::uint32_t> pedal { 0 }, latePedal { 0 };
+    std::atomic<int> lateBend[16], lost { 0 };
+    LiveKeys() { clear(); lost.store (0); }
+    void clear()
+    {
+        for (int c = 0; c < 16; ++c) { for (int h = 0; h < 2; ++h) { down[c][h].store (0); late[c][h].store (0); } lateBend[c].store (-1); }
+        pedal.store (0); latePedal.store (0);
+    }
+    static bool isOn (const LiveMsg& m) { return (m.b[0] & 0xf0) == 0x90 && m.b[2] > 0; }
+    static bool isOff (const LiveMsg& m) { return (m.b[0] & 0xf0) == 0x80 || ((m.b[0] & 0xf0) == 0x90 && m.b[2] == 0); }
+    static bool isPedal (const LiveMsg& m) { return (m.b[0] & 0xf0) == 0xb0 && m.b[1] == 64; }
+    // true when this message lets go of something this track is holding
+    bool holds (const LiveMsg& m) const
+    {
+        const int c = m.b[0] & 15, k = m.b[1] & 127;
+        if (isOff (m)) return (down[c][k >> 6].load() & (std::uint64_t (1) << (k & 63))) != 0;
+        return isPedal (m) && m.b[2] < 64 && (pedal.load() & (1u << c)) != 0;
+    }
+    // called with every message on its way into the queue; queued says whether it fitted
+    void note (const LiveMsg& m, bool queued)
+    {
+        const int status = m.b[0] & 0xf0, c = m.b[0] & 15, k = m.b[1] & 127; const std::uint64_t bit = std::uint64_t (1) << (k & 63);
+        if (! queued) lost.fetch_add (1);
+        if (isOn (m)) { if (queued) { down[c][k >> 6].fetch_or (bit); late[c][k >> 6].fetch_and (~bit); } }
+        else if (isOff (m)) { down[c][k >> 6].fetch_and (~bit); if (! queued) late[c][k >> 6].fetch_or (bit); }
+        else if (isPedal (m)) { if (m.b[2] >= 64) { if (queued) pedal.fetch_or (1u << c); } else { pedal.fetch_and (~(1u << c)); if (! queued) latePedal.fetch_or (1u << c); } }
+        else if (status == 0xb0 && (m.b[1] == 120 || m.b[1] == 123)) { for (int h = 0; h < 2; ++h) { const auto held = down[c][h].exchange (0); if (! queued) late[c][h].fetch_or (held); } }
+        else if (status == 0xe0) lateBend[c].store (queued ? -1 : (int) m.b[1] | ((int) m.b[2] << 7));
+    }
+    // AUDIO THREAD: what did not fit, put into this block at the given sample
+    void drain (juce::MidiBuffer& midi, int at)
+    {
+        for (int c = 0; c < 16; ++c)
+        {
+            for (int h = 0; h < 2; ++h) { const auto bits = late[c][h].exchange (0); if (bits != 0) for (int k = 0; k < 64; ++k) if (bits & (std::uint64_t (1) << k)) midi.addEvent (juce::MidiMessage::noteOff (c + 1, h * 64 + k), at); }
+            const int bend = lateBend[c].exchange (-1); if (bend >= 0) midi.addEvent (juce::MidiMessage::pitchWheel (c + 1, bend), at);
+        }
+        const auto p = latePedal.exchange (0); if (p != 0) for (int c = 0; c < 16; ++c) if (p & (1u << c)) midi.addEvent (juce::MidiMessage::controllerEvent (c + 1, 64, 0), at);
+    }
+};
+
 inline bool liveOf (const juce::MidiMessage& m, double timeMs, LiveMsg& out)
 {
     const int n = m.getRawDataSize();
@@ -441,6 +493,14 @@ struct Slot
     std::atomic<juce::AudioProcessorParameter*> patBank { nullptr }, patLink { nullptr };      // a self-sequencing plug-in's pattern and link controls (found by name from the message thread), set by pattern blocks; they live and die with the plug-in
     std::atomic<juce::AudioProcessorParameter*> patSub { nullptr };                            // a plug-in that splits its pattern over two controls (Archie Drums: "Pattern" A-D and "Bank" 1-4): patBank is the letter, patSub the number
     std::atomic<float> inPk { 0.0f }, outPk { 0.0f };    // the loudest sample into and out of this device since the console last asked (audio thread writes, the 30 Hz meter reads and clears)
+    // BYPASS WITHOUT A CLICK (all used by the audio thread only): how much of the plug-in is heard (0 bypassed, 1 in; -1 before its first block) and the sound that went IN, kept so that the unprocessed
+    // path can be delayed by as much as the plug-in delays: bypassed or not, the sound arrives at the same moment.
+    static constexpr int kDry = 16384;
+    float wet = -1.0f; int dryPos = 0, warm = 0;      // (warm: samples a delaying plug-in still needs to run before what it makes is the present sound again)
+    std::vector<float> dry = std::vector<float> ((size_t) kDry * 2, 0.0f);
+    // SIDE-CHAIN INPUT: what feeds this plug-in's side-chain (a source number, SideChain.h), which bus can take it (0 = an instrument's own input, 1 = the extra input of an effect, -1 = none), and
+    // where that bus sits in the buffer once it is on. hold: the plug-in's inputs are being changed, so the audio thread passes the sound round it for that moment.
+    std::atomic<int> scKey { 0 }; archieSC::SideTap side; int scBus = -1; std::atomic<int> scFirst { 0 }, scCount { 0 }; std::atomic<bool> hold { false };
     std::atomic<bool> broken { false }; int cleanBlocks = 0;      // BROKEN AUDIO: set by the audio thread while this device is sending sound that is not a number (or absurdly loud) and is being muted for it; cleared after a good run of normal blocks
     std::atomic<bool> patChecked { false }; std::atomic<int> patApplied { -1 };                // (patApplied: set by the audio thread)
     // The pattern as ONE number 0..N-1 (A1 = 0, A2 = 1 ... D4 = 15), whichever way the plug-in holds it: a single stepped control, or letter and number controls
@@ -671,10 +731,11 @@ struct CompStage
 {
     static constexpr float kThrMin = -40.0f, kThrMax = 0.0f, kRatioMin = 1.1f, kRatioMax = 20.0f, kRelMin = 0.05f, kRelMax = 1.2f, kMakeMax = 24.0f;
     // returns the biggest gain reduction (dB, positive) seen in the block
-    float process (juce::AudioBuffer<float>& buf, int n, bool on, float thr, float ratio, float relSec, bool fast, bool peakMode, float makeupDb, double sr, float attackSec = -1.0f, const float* keyL = nullptr, const float* keyR = nullptr)
+    // belowHz > 0 = DUCK BELOW: only what is under that frequency is turned down (a 24 dB per octave crossover whose halves add back level); the rest carries on. 0 = the whole sound, as before.
+    float process (juce::AudioBuffer<float>& buf, int n, bool on, float thr, float ratio, float relSec, bool fast, bool peakMode, float makeupDb, double sr, float attackSec = -1.0f, const float* keyL = nullptr, const float* keyR = nullptr, float belowHz = 0.0f)
     {
-        if (rate != sr) { rate = sr; mixStep = (float) (1.0 / juce::jmax (1.0, 0.005 * sr)); mix = 0.0f; env = ms = 0.0f; grDb = 0.0f; }
-        if (! on && mix <= 0.0f) { env = ms = 0.0f; grDb = 0.0f; return 0.0f; }                          // off: leave the sound exactly as it is
+        if (rate != sr) { rate = sr; mixStep = (float) (1.0 / juce::jmax (1.0, 0.005 * sr)); mix = 0.0f; env = ms = 0.0f; grDb = 0.0f; splitMix = 0.0f; splitHz = 47.0f; for (auto& c : xs) for (auto& f : c) f[0] = f[1] = 0.0; }
+        if (! on && mix <= 0.0f) { env = ms = 0.0f; grDb = 0.0f; splitMix = belowHz > 0.0f ? 1.0f : 0.0f; return 0.0f; }                          // off: leave the sound exactly as it is
         thr = juce::jlimit (kThrMin, kThrMax, thr); ratio = juce::jlimit (kRatioMin, kRatioMax, ratio); relSec = juce::jlimit (kRelMin, kRelMax, relSec); makeupDb = juce::jlimit (0.0f, kMakeMax, makeupDb);
         const float atkSec = attackSec > 0.0f ? juce::jlimit (0.0001f, 0.1f, attackSec) : (fast ? 0.0005f : 0.005f);
         const float atk = (float) std::exp (-1.0 / ((double) atkSec * sr)), rel = (float) std::exp (-1.0 / (relSec * sr));
@@ -695,11 +756,27 @@ struct CompStage
             grDb = target + (grDb - target) * (target > grDb ? atk : rel);
             worst = juce::jmax (worst, grDb);
             const float g = juce::Decibels::decibelsToGain (makeupDb - grDb), k = 1.0f + mix * (g - 1.0f);
-            l[i] = xl * k; if (r != nullptr) r[i] = xr * k;
+            const float splitWant = belowHz > 0.0f ? 1.0f : 0.0f;
+            if (splitWant > 0.0f || splitMix > 0.0f)
+            {
+                splitMix = splitWant > splitMix ? juce::jmin (splitWant, splitMix + mixStep) : juce::jmax (splitWant, splitMix - mixStep);
+                if (belowHz > 0.0f) splitHz += (juce::jlimit (20.0f, 200.0f, belowHz) - splitHz) * mixStep;
+                const double wg = std::tan (3.14159265358979 * (double) splitHz / sr), d = 1.4142135623730951, a1 = 1.0 / (1.0 + wg * (wg + d)), a2 = wg * a1, a3 = wg * a2;
+                const float other = 1.0f + mix * (juce::Decibels::decibelsToGain (makeupDb) - 1.0f);      // above the point: the make-up gain only, never the reduction
+                for (int c = 0; c < (r != nullptr ? 2 : 1); ++c)
+                {
+                    const double x = c == 0 ? xl : xr;
+                    auto pass = [&] (int st, double v, bool high) { auto& m = xs[c][st]; const double v3 = v - m[1], v1 = a1 * m[0] + a2 * v3, v2 = m[1] + a2 * m[0] + a3 * v3; m[0] = 2.0 * v1 - m[0]; m[1] = 2.0 * v2 - m[1]; return high ? v - d * v1 - v2 : v2; };
+                    const double low = pass (1, pass (0, x, false), false), high = pass (3, pass (2, x, true), true);
+                    const float whole = (float) x * k, split = (float) (low * k + high * other);
+                    (c == 0 ? l : r)[i] = whole + splitMix * (split - whole);
+                }
+            }
+            else { l[i] = xl * k; if (r != nullptr) r[i] = xr * k; }
         }
         return worst;
     }
-    float env = 0.0f, ms = 0.0f, grDb = 0.0f, mix = 0.0f, mixStep = 0.01f; double rate = 0.0;
+    float env = 0.0f, ms = 0.0f, grDb = 0.0f, mix = 0.0f, mixStep = 0.01f; double rate = 0.0; float splitMix = 0.0f, splitHz = 47.0f; double xs[2][4][2] {};
 };
 
 // THE CHANNEL GATE (Mixer, Dynamics section): turns the sound down when it falls below a threshold. Both channels are linked (one gain for left and right).
@@ -784,6 +861,8 @@ struct TrackState
     std::atomic<bool> compOn { false }, compFast { false }, compPeak { true }; std::atomic<float> compThr { -18.0f }, compRatio { 4.0f }, compRel { 0.3f }, compMakeup { 0.0f };     // the channel compressor
     // SIDE-CHAIN KEYS: a track has a number of its own (uid) that moves with it; compKey / gateKey name the track whose sound the compressor / gate listens to instead of its own (0 = its own)
     std::atomic<int> uid { 0 }, compKey { 0 }, gateKey { 0 };
+    // each key's own Low cut, High cut and Listen (SideChain.h); compBelow: DUCK BELOW for the compressor, 0 = all, else 22, 35 or 47 Hz
+    archieSC::SideTap compSide, gateSide; std::atomic<int> compBelow { 0 };
     // ROUTING: outTo = the uid of the BUS channel this track's sound goes to (0 = the master). A bus is a track of kind 2: what is routed to it is mixed into it, before its own effects and fader.
     // parallelFrom = the uid of the track this PARALLEL channel hears (that track's sound just after its instrument, before its channel processing), so it can be treated differently and mixed beside it.
     std::atomic<int> outTo { 0 }, parallelFrom { 0 };
@@ -811,6 +890,8 @@ struct TrackState
     TrackState() { for (int i = 0; i < 8; ++i) { sendDb[i].store (-100.0f); sendLvl[i].store (-60.0f); sendOn[i].store (false); sendPre[i].store (false); } }
     MidiFifo liveMidi;                                   // live notes (keys, pages, hardware): pushed by any thread, popped by the audio thread
     std::atomic<bool> killNotes { false };               // Panic: the audio thread sends an explicit note-off for every note on every channel before its next block (a plug-in that ignores all-notes-off and reset still lets go)
+    LiveKeys keys;
+    void sendLive (const LiveMsg& m) { keys.note (m, liveMidi.push (m)); }      // every live message goes in this way
     Snapshot<Arrangement, 16> arrSnap { emptyArrangement() };   // the clip instances: published by the message thread, read by the audio thread without waiting
     // the first instance's content: "the pattern" of the single-pattern pages (a copy; message thread)
     Clip primaryClip() const { const auto* a = arrSnap.load(); if (a->insts.empty() || a->insts[0].content == nullptr) { Clip c; c.lengthBeats = 0.0; return c; } return *a->insts[0].content; }
@@ -903,6 +984,7 @@ public:
                 if (z1 > 0 && beat >= 0.0) { auto& r = ts.recBuf[s1]; r.beat = beat; r.b[0] = m.getRawData()[0]; r.b[1] = m.getRawData()[1]; r.b[2] = m.getRawData()[2]; ts.recFifo.finishedWrite (1); }
             }
         }
+        ts.keys.drain (midi, n - 1);              // releases that found the queue full
         if (ts.killNotes.exchange (false))        // PANIC: a plug-in is free to ignore all-sound-off (CC120), all-notes-off (CC123) and reset(), and some do: a plain note-off for every note is the one message every instrument understands
             for (int ch = 1; ch <= 16; ++ch) for (int nt = 0; nt < 128; ++nt) midi.addEvent (juce::MidiMessage::noteOff (ch, nt), 0);
         const Arrangement* arr = ts.arrSnap.load();

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(ArchieStudioHost VERSION 0.1.159 LANGUAGES CXX)
+project(ArchieStudioHost VERSION 0.1.160 LANGUAGES CXX)
 # Archie Studio host (desktop): loads the person's VST3 plugins, plays them, and hosts the Ask Archie web pages in a window with one shared transport.
 # Uses the SAME JUCE tree and WebView2 SDK the Local Builder already provisions, so nothing new is downloaded to build it.
 #   cmake -S desktop-host -B D:/AskArchieHostBuild -G "Visual Studio 17 2022" -A x64
@@ -18,7 +18,7 @@ juce_add_gui_app(ArchieStudio
   ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/archie-daw-512.png"
   COMPANY_NAME "Ask Archie"
   BUNDLE_ID "net.askarchie.studio"
-  VERSION 0.1.159
+  VERSION 0.1.160
   NEEDS_WEBVIEW2 TRUE
   MICROPHONE_PERMISSION_ENABLED FALSE)
 
@@ -76,3 +76,23 @@ if (MSVC)
 endif()
 target_compile_definitions(render_test PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_STANDALONE_APPLICATION=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=0)
 target_link_libraries(render_test PRIVATE juce::juce_cryptography juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp juce::juce_gui_extra juce::juce_recommended_config_flags)
+
+# THE SIDE-CHAIN PROBE (2026-11-28): the engine with a real built plug-in fed through its side-chain. Not a build gate. Build target sidechain_probe.
+juce_add_console_app(sidechain_probe PRODUCT_NAME "sidechain_probe")
+target_sources(sidechain_probe PRIVATE tests/sidechain_probe.cpp)
+target_include_directories(sidechain_probe PRIVATE Source third_party)
+if (MSVC)
+  target_link_options(sidechain_probe PRIVATE /STACK:33554432)
+endif()
+target_compile_definitions(sidechain_probe PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_STANDALONE_APPLICATION=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(sidechain_probe PRIVATE juce::juce_cryptography juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp juce::juce_gui_extra juce::juce_recommended_config_flags)
+
+# THE POLISH PROBE (2026-11-27): measures timing, MIDI, hanging notes, clicks and sample and hold, with pass or fail per item. Not a build gate. Build target polish_probe.
+juce_add_console_app(polish_probe PRODUCT_NAME "polish_probe")
+target_sources(polish_probe PRIVATE tests/polish_probe.cpp)
+target_include_directories(polish_probe PRIVATE Source third_party)
+if (MSVC)
+  target_link_options(polish_probe PRIVATE /STACK:33554432)
+endif()
+target_compile_definitions(polish_probe PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_STANDALONE_APPLICATION=1 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=0)
+target_link_libraries(polish_probe PRIVATE juce::juce_cryptography juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp juce::juce_gui_extra juce::juce_recommended_config_flags)

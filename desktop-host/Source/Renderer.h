@@ -152,7 +152,10 @@ private:
 };
 
 //==============================================================================
-struct PlugRef { juce::AudioProcessor* proc = nullptr; Slot* slot = nullptr; };
+// What one listener's trigger is made from: a plan track, an FX return (heard one block late) or a tempo pulse. delay: samples the trigger waits so it lines up with the sound it works on (for a
+// pulse: how late that sound is, so the pulse is placed on the same moment of the song).
+struct KeyPlan { int track = -1, ret = -1, pulse = 0, delay = 0; bool any() const { return track >= 0 || ret >= 0 || pulse != 0; } };
+struct PlugRef { juce::AudioProcessor* proc = nullptr; Slot* slot = nullptr; KeyPlan key; };
 struct SendPlan { SendProcessor* proc = nullptr; bool pre = false; };
 struct TrackPlan
 {
@@ -164,6 +167,7 @@ struct TrackPlan
     int index = 0, delay = 0;                 // delay: samples added so this track lines up with the slowest track
     std::vector<int> inputs; int parallelFrom = -1; bool isSource = false;      // routing: the plan tracks mixed into this bus, the track a parallel channel hears, and whether this track is heard by one
     int compKey = -1, gateKey = -1; bool isKey = false;      // side-chain: the plan tracks whose sound the compressor / gate listen to, and whether this track is anyone's key
+    KeyPlan compFrom, gateFrom;                               // the same, with returns, pulses and the line-up delay
     int sendExtra[kSends] {};                 // extra delay on a send tap so every track's tap still arrives together at the return
 };
 struct ReturnPlan
@@ -172,7 +176,7 @@ struct ReturnPlan
     std::vector<PlugRef> chain;
     bool active = false;                      // has inserts, or receives at least one send
     std::vector<int> fromTracks;              // plan-track numbers that send into it
-    int delay = 0;
+    int delay = 0; bool isKey = false;        // isKey: something listens to this return
 };
 struct RenderPlan
 {
@@ -194,10 +198,10 @@ public:
     // message thread: allocate everything the audio thread will touch
     void prepare (double sampleRate, int maxBlockSize, int numWorkers)
     {
-        sr = sampleRate; maxBlock = maxBlockSize;
-        for (auto& t : tw) { t = std::make_unique<TrackWork>(); t->buf.setSize (2, maxBlock); t->pre.setSize (2, maxBlock); t->scratch.setSize (16, maxBlock); t->midi.ensureSize (32768); t->scratchMidi.ensureSize (32768); t->post.prepare(); t->preDelay.prepare(); t->keyOut.setSize (2, maxBlock); t->keyOut.clear(); t->srcOut.setSize (2, maxBlock); t->srcOut.clear(); for (auto& s : t->sendOut) s.reset(); }
-        for (auto& r : rw) { r = std::make_unique<ReturnWork>(); r->buf.setSize (2, maxBlock); r->scratch.setSize (16, maxBlock); r->out.prepare(); }
-        mix.setSize (2, maxBlock); mscratch.setSize (16, maxBlock); dryMix.prepare(); masterKeyBuf.setSize (2, maxBlock); masterKeyLine.prepare();
+        sr = sampleRate; maxBlock = maxBlockSize; masterSeam = SeamFade();
+        for (auto& t : tw) { t = std::make_unique<TrackWork>(); t->buf.setSize (2, maxBlock); t->pre.setSize (2, maxBlock); t->scratch.setSize (16, maxBlock); t->midi.ensureSize (32768); t->scratchMidi.ensureSize (32768); t->post.prepare(); t->preDelay.prepare(); t->keyOut.setSize (2, maxBlock); t->keyOut.clear(); t->srcOut.setSize (2, maxBlock); t->srcOut.clear(); t->keyWork.setSize (2, maxBlock); for (auto& s : t->sendOut) s.reset(); }
+        for (auto& r : rw) { r = std::make_unique<ReturnWork>(); r->buf.setSize (2, maxBlock); r->scratch.setSize (16, maxBlock); r->out.prepare(); r->keyOut.setSize (2, maxBlock); r->keyOut.clear(); r->keyWork.setSize (2, maxBlock); }
+        mix.setSize (2, maxBlock); mscratch.setSize (16, maxBlock); dryMix.prepare(); masterKeyBuf.setSize (2, maxBlock); masterKeyLine.prepare(); masterWork.setSize (2, maxBlock);
         pool.start (numWorkers);
     }
     void shutdown() { pool.stop(); }
@@ -253,14 +257,30 @@ private:
     StageStat trackStage, returnStage;
     double parallelThresholdUs = 150.0;
 
+    // WHEN THE PLUG-INS ON A CHAIN CHANGE (added, removed, moved) the sound would jump. The jump is measured on the first sample after the change and faded away over a few milliseconds.
+    struct SeamFade
+    {
+        std::uint64_t sig = 0; bool known = false; float last[2] { 0.0f, 0.0f }, gap[2] { 0.0f, 0.0f }; int left = 0, length = 1;
+        static std::uint64_t signature (const std::vector<PlugRef>& chain) { std::uint64_t h = 1469598103934665603ull; for (const auto& r : chain) h = (h ^ (std::uint64_t) (std::uintptr_t) r.proc) * 1099511628211ull; return h; }
+        void apply (juce::AudioBuffer<float>& b, int n, std::uint64_t now, int fadeSamples)
+        {
+            if (n <= 0) return;
+            if (known && now != sig) { for (int c = 0; c < 2; ++c) gap[c] = last[c] - b.getReadPointer (c)[0]; length = left = juce::jmax (1, fadeSamples); }
+            sig = now; known = true;
+            for (int i = 0; i < n && left > 0; ++i, --left) { const float g = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi * (float) left / (float) length); for (int c = 0; c < 2; ++c) b.getWritePointer (c)[i] += gap[c] * g; }
+            for (int c = 0; c < 2; ++c) last[c] = b.getReadPointer (c)[n - 1];
+        }
+    };
+
     struct TrackWork
     {
-        juce::AudioBuffer<float> buf, pre, scratch, keyOut, srcOut; juce::MidiBuffer midi, scratchMidi;
+        juce::AudioBuffer<float> buf, pre, scratch, keyOut, srcOut, keyWork; juce::MidiBuffer midi, scratchMidi;
+        SeamFade seam;
         StereoDelay post, preDelay;
         std::unique_ptr<juce::AudioBuffer<float>> sendOut[kSends];
         std::unique_ptr<StereoDelay> sendDelay[kSends];
     };
-    struct ReturnWork { juce::AudioBuffer<float> buf, scratch; juce::MidiBuffer emptyMidi, scratchMidi; StereoDelay out; bool ran = false; };
+    struct ReturnWork { juce::AudioBuffer<float> buf, scratch, keyOut, keyWork; juce::MidiBuffer emptyMidi, scratchMidi; StereoDelay out; SeamFade seam; bool ran = false; };
 
     static juce::AudioBuffer<float> view (juce::AudioBuffer<float>& b, int channels, int n) { return juce::AudioBuffer<float> (b.getArrayOfWritePointers(), channels, n); }
 
@@ -271,12 +291,45 @@ private:
         return worst > 0x447a0000u;      // 1000.0f
     }
 
+    // A bypassed plug-in is not heard, but it must still hear keys being LET GO (or it holds them for ever and sounds them again when the bypass comes off). So in a block that carries a release, it is run on
+    // silence with only the releases (note-off, pedal up, all notes or all sound off), and what it makes is thrown away.
+    static void releaseWhileBypassed (juce::AudioProcessor& p, const juce::MidiBuffer& midiIn, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& scratchMidi, int n)
+    {
+        if (midiIn.isEmpty() || ! p.acceptsMidi()) return;
+        scratchMidi.clear();
+        for (const auto meta : midiIn)
+        {
+            const auto m = meta.getMessage();
+            if (m.isNoteOff() || (m.isController() && ((m.getControllerNumber() == 64 && m.getControllerValue() < 64) || m.getControllerNumber() == 120 || m.getControllerNumber() == 123))) scratchMidi.addEvent (m, meta.samplePosition);
+        }
+        if (scratchMidi.isEmpty()) return;
+        const int need = juce::jmax (p.getTotalNumInputChannels(), p.getTotalNumOutputChannels()), ch = juce::jmin (16, need);
+        if (ch == 0 || need > scratch.getNumChannels()) return;
+        for (int c = 0; c < ch; ++c) juce::FloatVectorOperations::clear (scratch.getWritePointer (c), n);
+        juce::AudioBuffer<float> v (scratch.getArrayOfWritePointers(), ch, n);
+        p.processBlock (v, scratchMidi);
+    }
+
     // one hosted processor in a chain. Channel rules (the same the graph used): a stereo-in plug-in gets L/R; a mono-in one gets L+R; one with no input gets silence and its output replaces the signal;
     // a mono-out one is copied to both sides; one with no output leaves the signal untouched (an analyser, say).
-    static void runInsert (const PlugRef& ref, juce::AudioBuffer<float>& buf, const juce::MidiBuffer& midiIn, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& scratchMidi, int n)
+    static void runInsert (const PlugRef& ref, juce::AudioBuffer<float>& buf, const juce::MidiBuffer& midiIn, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& scratchMidi, int n, int fadeSamples, const float* keyL = nullptr, const float* keyR = nullptr)
     {
-        if (ref.proc == nullptr || (ref.slot != nullptr && ref.slot->bypass.load (std::memory_order_relaxed))) return;
+        if (ref.proc == nullptr) return;
+        if (ref.slot != nullptr && ref.slot->hold.load()) return;      // its inputs are being changed: the sound goes round it for that moment
         auto* p = ref.proc;
+        auto* slot = ref.slot;
+        const bool off = slot != nullptr && slot->bypass.load (std::memory_order_relaxed);
+        if (slot != nullptr && slot->wet < 0.0f) slot->wet = off ? 0.0f : 1.0f;                   // a plug-in's first block starts where its switch is
+        // the unprocessed path, delayed to match the plug-in (nothing is stored for a plug-in without delay, or with more than the store holds)
+        int late = slot != nullptr ? juce::jmax (0, p->getLatencySamples()) : 0; if (late + n > Slot::kDry) late = 0;
+        if (late > 0) for (int c = 0; c < 2; ++c) { const float* from = buf.getReadPointer (c); float* ring = slot->dry.data() + c * Slot::kDry; for (int i = 0; i < n; ++i) ring[(slot->dryPos + i) & (Slot::kDry - 1)] = from[i]; }
+        auto dryAt = [&] (int c, int i) { return late > 0 ? slot->dry[(size_t) (c * Slot::kDry + ((slot->dryPos + i - late) & (Slot::kDry - 1)))] : buf.getReadPointer (c)[i]; };
+        if (off && slot->wet <= 0.0f)      // fully bypassed: the plug-in is not heard (and only hears keys being let go)
+        {
+            releaseWhileBypassed (*p, midiIn, scratch, scratchMidi, n); slot->warm = late;
+            if (late > 0) { for (int c = 0; c < 2; ++c) { float* to = buf.getWritePointer (c); for (int i = 0; i < n; ++i) to[i] = dryAt (c, i); } slot->dryPos = (slot->dryPos + n) & (Slot::kDry - 1); }
+            return;
+        }
         if (ref.slot != nullptr && ref.slot->resetNext.exchange (false)) p->reset();             // Panic
         const int nIn = p->getTotalNumInputChannels(), nOut = p->getTotalNumOutputChannels(), ch = juce::jmin (16, juce::jmax (nIn, nOut));
         if (ch == 0) return;
@@ -284,6 +337,15 @@ private:
         for (int c = 0; c < ch; ++c) juce::FloatVectorOperations::clear (scratch.getWritePointer (c), n);
         if (nIn >= 2) { juce::FloatVectorOperations::copy (scratch.getWritePointer (0), buf.getReadPointer (0), n); juce::FloatVectorOperations::copy (scratch.getWritePointer (1), buf.getReadPointer (1), n); }
         else if (nIn == 1) { juce::FloatVectorOperations::add (scratch.getWritePointer (0), buf.getReadPointer (0), n); juce::FloatVectorOperations::add (scratch.getWritePointer (0), buf.getReadPointer (1), n); }
+        if (slot != nullptr && keyL != nullptr)      // SIDE-CHAIN INPUT: the trigger goes on the plug-in's side-chain channels (for an instrument, its own input)
+        {
+            const int first = slot->scFirst.load(), count = juce::jmin (2, slot->scCount.load());
+            if (count > 0 && first >= 0 && first + count <= ch)
+            {
+                if (count == 2) { juce::FloatVectorOperations::copy (scratch.getWritePointer (first), keyL, n); juce::FloatVectorOperations::copy (scratch.getWritePointer (first + 1), keyR, n); }
+                else { float* to = scratch.getWritePointer (first); for (int i = 0; i < n; ++i) to[i] = 0.5f * (keyL[i] + keyR[i]); }
+            }
+        }
         scratchMidi.clear();
         if (p->acceptsMidi()) scratchMidi.addEvents (midiIn, 0, n, 0);
         auto peakOf = [n] (const float* a, const float* b) { float pk = 0.0f; for (const float* q : { a, b }) { if (q == nullptr) continue; const auto mm = juce::FloatVectorOperations::findMinAndMax (q, n); pk = juce::jmax (pk, std::abs (mm.getStart()), std::abs (mm.getEnd())); } return pk; };
@@ -304,9 +366,27 @@ private:
             }
         }
         if (ref.slot != nullptr && nOut > 0) { const float pk = peakOf (scratch.getReadPointer (0), nOut >= 2 ? scratch.getReadPointer (1) : nullptr); if (pk > ref.slot->outPk.load (std::memory_order_relaxed)) ref.slot->outPk.store (pk, std::memory_order_relaxed); }      // and OUT of it
-        if (nOut >= 2) { juce::FloatVectorOperations::copy (buf.getWritePointer (0), scratch.getReadPointer (0), n); juce::FloatVectorOperations::copy (buf.getWritePointer (1), scratch.getReadPointer (1), n); }
-        else if (nOut == 1) { juce::FloatVectorOperations::copy (buf.getWritePointer (0), scratch.getReadPointer (0), n); juce::FloatVectorOperations::copy (buf.getWritePointer (1), scratch.getReadPointer (0), n); }
+        if (slot == nullptr || (! off && slot->wet >= 1.0f))
+        {
+            if (nOut >= 2) { juce::FloatVectorOperations::copy (buf.getWritePointer (0), scratch.getReadPointer (0), n); juce::FloatVectorOperations::copy (buf.getWritePointer (1), scratch.getReadPointer (1), n); }
+            else if (nOut == 1) { juce::FloatVectorOperations::copy (buf.getWritePointer (0), scratch.getReadPointer (0), n); juce::FloatVectorOperations::copy (buf.getWritePointer (1), scratch.getReadPointer (0), n); }
+        }
+        else      // the switch has moved: a straight crossfade over a few milliseconds between the unprocessed sound and the plug-in's
+        {
+            float w = slot->wet; const float step = (off ? -1.0f : 1.0f) / (float) juce::jmax (1, fadeSamples);
+            float *l = buf.getWritePointer (0), *r = buf.getWritePointer (1);
+            for (int i = 0; i < n; ++i)
+            {
+                if (! off && slot->warm > 0) --slot->warm; else w = juce::jlimit (0.0f, 1.0f, w + step);      // coming back: wait until the plug-in's delay has filled with the present sound
+                const float dl = dryAt (0, i), dr = dryAt (1, i);
+                const float wl = nOut >= 1 ? scratch.getReadPointer (0)[i] : dl, wr = nOut >= 2 ? scratch.getReadPointer (1)[i] : nOut == 1 ? scratch.getReadPointer (0)[i] : dr;
+                l[i] = dl + (wl - dl) * w; r[i] = dr + (wr - dr) * w;
+            }
+            slot->wet = w;
+        }
+        if (late > 0) slot->dryPos = (slot->dryPos + n) & (Slot::kDry - 1);
     }
+
 
     // PATTERN BLOCKS: before a plug-in that has pattern controls runs, put its pattern (and its link to the bass off) where the block says, once per change
     static void applyPattern (const PlugRef& ref, int want, double origin)
@@ -318,6 +398,42 @@ private:
         if (auto* pl = ref.slot->patLink.load (std::memory_order_relaxed)) pl->setValue (0.0f);
         ref.slot->patSet (want); ref.slot->patApplied.store (want);
     }
+
+    // Makes one listener's trigger into `work` and says whether it has one. sound = true for a plug-in's input (a pulse is then a short 60 Hz thud a detector can hear), false for the built-in
+    // compressor and gate (a clean level). A channel trigger is delayed to line up and filtered by the listener's Low cut and High cut; a pulse is silent unless the song plays.
+    bool makeKey (const RenderPlan& P, const KeyPlan& key, archieSC::SideTap& tap, juce::AudioBuffer<float>& work, int n, bool sound, const BlockInfo* blk)
+    {
+        if (! key.any()) return false;
+        float* l = work.getWritePointer (0); float* r = work.getWritePointer (1);
+        if (key.pulse != 0)
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                float v = 0.0f;
+                if (blk != nullptr && blk->playing && blk->numSegs > 0)
+                {
+                    const int s = blk->numSegs > 1 && i >= blk->segs[1].startSample ? 1 : 0;
+                    double since = 0.0; const float level = archieSC::pulseAt (key.pulse, blk->segs[s].beatOfSample (i - key.delay), blk->bpm, since);
+                    v = sound ? level * 0.9f * (float) std::sin (6.283185307179586 * 60.0 * since) : level;
+                }
+                l[i] = r[i] = v;
+            }
+            return true;
+        }
+        const juce::AudioBuffer<float>* from = key.track >= 0 ? &tw[(size_t) P.tracks[(size_t) key.track].index]->keyOut : &rw[(size_t) key.ret]->keyOut;
+        juce::FloatVectorOperations::copy (l, from->getReadPointer (0), n); juce::FloatVectorOperations::copy (r, from->getReadPointer (1), n);
+        tap.delay (l, r, n, key.delay);
+        tap.filter.process (l, r, n, tap.lo.load (std::memory_order_relaxed), tap.hi.load (std::memory_order_relaxed), sr);
+        return true;
+    }
+    // a plug-in with whatever feeds its side-chain, and LISTEN
+    void runKeyed (const RenderPlan& P, const PlugRef& ins, juce::AudioBuffer<float>& buf, const juce::MidiBuffer& midi, juce::AudioBuffer<float>& scratch, juce::MidiBuffer& scratchMidi, juce::AudioBuffer<float>& work, int n, const BlockInfo* blk)
+    {
+        const bool keyed = ins.slot != nullptr && makeKey (P, ins.key, ins.slot->side, work, n, true, blk);
+        runInsert (ins, buf, midi, scratch, scratchMidi, n, fadeLength(), keyed ? work.getReadPointer (0) : nullptr, keyed ? work.getReadPointer (1) : nullptr);
+        if (ins.slot != nullptr) ins.slot->side.hear (buf, keyed ? work.getReadPointer (0) : nullptr, keyed ? work.getReadPointer (1) : nullptr, n, sr);
+    }
+    static const BlockInfo* blockOf (const RenderPlan& P) { return P.tracks.empty() || P.tracks[0].ts == nullptr ? nullptr : P.tracks[0].ts->blk; }
 
     void renderTrack (const RenderPlan& P, int i, const juce::AudioBuffer<float>& in, int n)
     {
@@ -355,17 +471,28 @@ private:
                 {
                     if (tp.isSource) for (int c = 0; c < 2; ++c) juce::FloatVectorOperations::copy (w.srcOut.getWritePointer (c), buf.getReadPointer (c), n);
                     ts.inputStage.process (buf, n, inDb, inInv, sr);
-                    const juce::AudioBuffer<float>* cKey = tp.compKey >= 0 ? &tw[(size_t) P.tracks[(size_t) tp.compKey].index]->keyOut : nullptr;
-                    const juce::AudioBuffer<float>* gKey = tp.gateKey >= 0 ? &tw[(size_t) P.tracks[(size_t) tp.gateKey].index]->keyOut : nullptr;
-                    { const float gr = ts.compStage.process (buf, n, ts.compOn.load(), ts.compThr.load(), ts.compRatio.load(), ts.compRel.load(), ts.compFast.load(), ts.compPeak.load(), ts.compMakeup.load(), sr, -1.0f, cKey != nullptr ? cKey->getReadPointer (0) : nullptr, cKey != nullptr ? cKey->getReadPointer (1) : nullptr); if (gr > ts.compGr.load (std::memory_order_relaxed)) ts.compGr.store (gr, std::memory_order_relaxed); }
-                    { const float gg = ts.gateStage.process (buf, n, ts.gateOn.load(), ts.gateExp.load(), ts.gateFast.load(), ts.gateThr.load(), ts.gateRange.load(), ts.gateRel.load(), ts.gateHold.load(), sr, gKey != nullptr ? gKey->getReadPointer (0) : nullptr, gKey != nullptr ? gKey->getReadPointer (1) : nullptr); if (gg > ts.gateGr.load (std::memory_order_relaxed)) ts.gateGr.store (gg, std::memory_order_relaxed); }
+                    {
+                        const bool keyed = makeKey (P, tp.compFrom, ts.compSide, w.keyWork, n, false, ts.blk);
+                        const float* kl = keyed ? w.keyWork.getReadPointer (0) : nullptr; const float* kr = keyed ? w.keyWork.getReadPointer (1) : nullptr;
+                        const float gr = ts.compStage.process (buf, n, ts.compOn.load(), ts.compThr.load(), ts.compRatio.load(), ts.compRel.load(), ts.compFast.load(), ts.compPeak.load(), ts.compMakeup.load(), sr, -1.0f, kl, kr, (float) ts.compBelow.load());
+                        if (gr > ts.compGr.load (std::memory_order_relaxed)) ts.compGr.store (gr, std::memory_order_relaxed);
+                        ts.compSide.hear (buf, kl, kr, n, sr);
+                    }
+                    {
+                        const bool keyed = makeKey (P, tp.gateFrom, ts.gateSide, w.keyWork, n, false, ts.blk);
+                        const float* kl = keyed ? w.keyWork.getReadPointer (0) : nullptr; const float* kr = keyed ? w.keyWork.getReadPointer (1) : nullptr;
+                        const float gg = ts.gateStage.process (buf, n, ts.gateOn.load(), ts.gateExp.load(), ts.gateFast.load(), ts.gateThr.load(), ts.gateRange.load(), ts.gateRel.load(), ts.gateHold.load(), sr, kl, kr);
+                        if (gg > ts.gateGr.load (std::memory_order_relaxed)) ts.gateGr.store (gg, std::memory_order_relaxed);
+                        ts.gateSide.hear (buf, kl, kr, n, sr);
+                    }
                     if (ts.blk != nullptr && ts.blk->playing && ts.blk->numSegs > 0) { const auto* eas = ts.autoSnap.load(); if (eas != nullptr) for (const auto& lane : eas->lanes) if (lane.kind == kEqLaneKind && lane.on && ! lane.pts.empty()) applyEqLane (ts.eq, ts.eqHpOn, ts.eqHpHz, ts.eqLpOn, ts.eqLpHz, lane.param, autoValueAt (lane, ts.blk->segs[0].startBeat)); }      // EQ sweeps: the EQ lanes, block by block
                     ts.eqStage.process (buf, n, ts.eqHpOn.load(), ts.eqHpHz.load(), ts.eqLpOn.load(), ts.eqLpHz.load(), sr);
                     ts.paraEq.process (buf, n, ts.eq, sr); ts.eq.feed (buf, n);
                 }
-                if (k < tp.inserts.size()) { applyPattern (tp.inserts[k], ts.patWant.load (std::memory_order_relaxed), ts.patOrigin.load (std::memory_order_relaxed)); runInsert (tp.inserts[k], buf, w.midi, w.scratch, w.scratchMidi, n); }
+                if (k < tp.inserts.size()) { applyPattern (tp.inserts[k], ts.patWant.load (std::memory_order_relaxed), ts.patOrigin.load (std::memory_order_relaxed)); runKeyed (P, tp.inserts[k], buf, w.midi, w.scratch, w.scratchMidi, w.keyWork, n, ts.blk); }
             }
         }
+        w.seam.apply (buf, n, SeamFade::signature (tp.inserts), fadeLength());
         tp.ts->widthStage.process (buf, n, tp.ts->width.load(), sr);                                    // the channel's width: after its effects, before the sends tap and the pan
         if (tp.isKey) for (int c = 0; c < 2; ++c) juce::FloatVectorOperations::copy (w.keyOut.getWritePointer (c), buf.getReadPointer (c), n);      // the key: after the effects, before the fader, so a muted track still keys
         if (tp.anyPre) { auto pre = view (w.pre, 2, n); juce::FloatVectorOperations::copy (pre.getWritePointer (0), buf.getReadPointer (0), n); juce::FloatVectorOperations::copy (pre.getWritePointer (1), buf.getReadPointer (1), n); }
@@ -390,7 +517,7 @@ private:
     {
         const auto& rp = P.returns[(size_t) r]; auto& w = *rw[(size_t) r];
         w.ran = false;
-        if (! rp.active) return;
+        if (! rp.active) { if (rp.isKey) w.keyOut.clear(); return; }
         auto buf = view (w.buf, 2, n);
         buf.clear();
         for (int ti : rp.fromTracks)
@@ -400,7 +527,10 @@ private:
             juce::FloatVectorOperations::add (buf.getWritePointer (0), src->getReadPointer (0), n);
             juce::FloatVectorOperations::add (buf.getWritePointer (1), src->getReadPointer (1), n);
         }
-        for (const auto& ins : rp.chain) runInsert (ins, buf, w.emptyMidi, w.scratch, w.scratchMidi, n);
+        // (a return keyed from a return reads the block before, which that return may be writing now: the sound is at most one block of it, never anything outside the buffers)
+        for (const auto& ins : rp.chain) runKeyed (P, ins, buf, w.emptyMidi, w.scratch, w.scratchMidi, w.keyWork, n, blockOf (P));
+        w.seam.apply (buf, n, SeamFade::signature (rp.chain), fadeLength());
+        if (rp.isKey) for (int c = 0; c < 2; ++c) juce::FloatVectorOperations::copy (w.keyOut.getWritePointer (c), buf.getReadPointer (c), n);      // the return as a key: after its effects, before its fader
         juce::MidiBuffer none;
         rp.ts->stripProc->processBlock (buf, none);
         w.out.setDelay (rp.delay); w.out.process (buf, n);
@@ -425,7 +555,8 @@ private:
                 juce::FloatVectorOperations::add (m.getWritePointer (1), rw[(size_t) r]->buf.getReadPointer (1), n);
             }
         juce::MidiBuffer none;
-        for (const auto& ins : P.masterChain) runInsert (ins, m, none, mscratch, mscratchMidi, n);
+        for (const auto& ins : P.masterChain) runKeyed (P, ins, m, none, mscratch, mscratchMidi, masterWork, n, blockOf (P));
+        masterSeam.apply (m, n, SeamFade::signature (P.masterChain), fadeLength());
         if (P.master != nullptr)
         {
             P.master->keyL = P.master->keyR = nullptr;
@@ -441,10 +572,12 @@ private:
     }
 
     double sr = 48000.0; int maxBlock = 512;
+    SeamFade masterSeam;
+    int fadeLength() const noexcept { return juce::jmax (16, (int) (0.008 * sr)); }      // every switch fades over 8 ms
     Snapshot<RenderPlan> plans { std::make_unique<RenderPlan>() };
     std::array<std::unique_ptr<TrackWork>, kTracks> tw;
     std::array<std::unique_ptr<ReturnWork>, kReturns> rw;
-    juce::AudioBuffer<float> mix, mscratch, masterKeyBuf; juce::MidiBuffer mscratchMidi; StereoDelay dryMix, masterKeyLine;
+    juce::AudioBuffer<float> mix, mscratch, masterKeyBuf, masterWork; juce::MidiBuffer mscratchMidi; StereoDelay dryMix, masterKeyLine;
     WorkerPool pool;
 };
 

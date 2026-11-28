@@ -318,7 +318,7 @@ public:
         if (isPlayed)
         {
             auto copy = m; copy.setTimeStamp (now * 0.001);
-            LiveMsg lm; if (liveOf (copy, now, lm)) for (auto& t : tracks) if (t->recTarget.load()) t->liveMidi.push (lm);
+            LiveMsg lm; if (liveOf (copy, now, lm)) for (auto& t : tracks) if (t->recTarget.load() || t->keys.holds (lm)) t->sendLive (lm);      // a release also goes wherever the press went
         }
         // what the console shows: any message except the constant background ones (active sensing; clock only when nothing else has arrived lately)
         if (m.getRawDataSize() > 0 && m.getRawData()[0] != 0xFE)
@@ -345,9 +345,14 @@ public:
 
     //==========================================================================
     // message thread API (the bridge calls these)
-    void pushLive (TrackState& t, const juce::MidiMessage& m) { LiveMsg lm; if (liveOf (m, juce::Time::getMillisecondCounterHiRes(), lm)) t.liveMidi.push (lm); }
+    void pushLive (TrackState& t, const juce::MidiMessage& m) { LiveMsg lm; if (liveOf (m, juce::Time::getMillisecondCounterHiRes(), lm)) t.sendLive (lm); }
     void noteOn (int track, int note, int vel, int ch = 1) { if (auto* t = trackAt (track)) pushLive (*t, juce::MidiMessage::noteOn (ch, note, (juce::uint8) vel)); }
-    void noteOff (int track, int note, int ch = 1)         { if (auto* t = trackAt (track)) pushLive (*t, juce::MidiMessage::noteOff (ch, note)); }
+    void noteOff (int track, int note, int ch = 1)
+    {
+        LiveMsg lm; if (! liveOf (juce::MidiMessage::noteOff (ch, note), juce::Time::getMillisecondCounterHiRes(), lm)) return;
+        auto* asked = trackAt (track);
+        for (auto& t : tracks) if (t.get() == asked || t->keys.holds (lm)) t->sendLive (lm);
+    }
     // PANIC: silence everything. Every track gets 'all sound off' and 'all notes off' on all 16 channels (for a plug-in that ignores one of them), and every plug-in on every track, FX channel, folder and the
     // master is reset on the audio thread before its next block (that ends hung voices and clears delay, reverb and feedback tails). It does not stop the transport and does not change any setting or the song.
     juce::AudioPlayHead* hostPlayHead() { return &playHead; }          // the position every hosted plug-in is told (for the offline checks)
@@ -370,6 +375,7 @@ public:
             for (int ch = 1; ch <= 16; ++ch) { pushLive (t, juce::MidiMessage::controllerEvent (ch, 120, 0)); pushLive (t, juce::MidiMessage::allNotesOff (ch)); }
             t.killNotes.store (true);                 // and an explicit note-off for every note (see TrackSourceProcessor::processBlock): the Archie Mini Synth ignored the two controllers and reset() and kept sounding
             for (auto& s : t.slots) s->resetNext.store (true);
+            t.keys.clear();
         }
         for (auto& r : returns) for (auto& s : r->slots) s->resetNext.store (true);
         for (auto& s : masterChain->slots) s->resetNext.store (true);
@@ -1720,6 +1726,13 @@ public:
         if (key == "outTo") return t.outTo.load();
         if (key == "compKey") return t.compKey.load();
         if (key == "gateKey") return t.gateKey.load();
+        if (key == "compKeyLo") return (double) t.compSide.lo.load();
+        if (key == "gateKeyLo") return (double) t.gateSide.lo.load();
+        if (key == "compKeyHi") return (double) t.compSide.hi.load();
+        if (key == "gateKeyHi") return (double) t.gateSide.hi.load();
+        if (key == "compKeyListen") return t.compSide.listen.load();
+        if (key == "gateKeyListen") return t.gateSide.listen.load();
+        if (key == "compBelow") return t.compBelow.load();
         if (key == "compOn") return t.compOn.load();
         if (key == "compFast") return t.compFast.load();
         if (key == "compPeak") return t.compPeak.load();
@@ -1761,7 +1774,11 @@ public:
         else if (key == "gateRange") t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) v));
         else if (key == "gateRel") t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) v));
         else if (key == "gateHold") t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) v));
-        else if (key == "compKey" || key == "gateKey") { const int k = juce::jmax (0, (int) v); (key == "compKey" ? t.compKey : t.gateKey).store (k == t.uid.load() ? 0 : k); publishPlan(); }
+        else if (key == "compKey" || key == "gateKey") { const int k = archieSC::sanitize ((int) v); (key == "compKey" ? t.compKey : t.gateKey).store (k == t.uid.load() ? 0 : k); if (k == 0) (key == "compKey" ? t.compSide : t.gateSide).listen.store (false); publishPlan(); }
+        else if (key == "compKeyLo" || key == "gateKeyLo") (key == "compKeyLo" ? t.compSide : t.gateSide).lo.store ((float) juce::jlimit (20.0, 4000.0, (double) v));
+        else if (key == "compKeyHi" || key == "gateKeyHi") (key == "compKeyHi" ? t.compSide : t.gateSide).hi.store ((float) juce::jlimit (22.0, 20000.0, (double) v));
+        else if (key == "compKeyListen" || key == "gateKeyListen") (key == "compKeyListen" ? t.compSide : t.gateSide).listen.store ((bool) v);
+        else if (key == "compBelow") { const int hz = (int) v; t.compBelow.store (hz == 22 || hz == 35 || hz == 47 ? hz : 0); }
         else if (key == "compOn") t.compOn.store ((bool) v);
         else if (key == "compFast") t.compFast.store ((bool) v);
         else if (key == "compPeak") t.compPeak.store ((bool) v);
@@ -1794,7 +1811,7 @@ public:
         if (transport.recording.load() && (key == "gainDb" || key == "pan" || key == "inGainDb")) autoRecFromControl (chain, key, (double) after);
         if (key == "armed" || before == after) return true;
         const bool dragged = key == "gainDb" || key == "pan" || key == "inGainDb" || key == "eqHpHz" || key == "eqLpHz" || key == "compThr" || key == "compRatio" || key == "compRel" || key == "compMakeup" || key == "gateThr" || key == "gateRange" || key == "gateRel" || key == "gateHold" || key == "width";
-        const juce::String what = key == "gainDb" ? "level" : key == "source" ? "sound source" : key == "inGainDb" ? "input gain" : key == "inInvert" ? "input polarity" : key == "groove" ? "groove channel" : key == "outTo" ? "output" : key == "compKey" ? "compressor side-chain" : key == "gateKey" ? "gate side-chain" : key == "width" ? "stereo width" : key == "gateOn" ? "gate switch" : key == "gateExp" ? "gate mode" : key == "gateFast" ? "gate attack" : key == "gateThr" ? "gate threshold" : key == "gateRange" ? "gate range" : key == "gateRel" ? "gate release" : key == "gateHold" ? "gate hold" : key == "compOn" ? "compressor switch" : key == "compFast" ? "compressor attack" : key == "compPeak" ? "compressor detector" : key == "compThr" ? "compressor threshold" : key == "compRatio" ? "compressor ratio" : key == "compRel" ? "compressor release" : key == "compMakeup" ? "compressor make-up" : key == "eqHpOn" ? "high-pass switch" : key == "eqHpHz" ? "high-pass frequency" : key == "eqLpOn" ? "low-pass switch" : key == "eqLpHz" ? "low-pass frequency" : key;
+        const juce::String what = key == "gainDb" ? "level" : key == "source" ? "sound source" : key == "inGainDb" ? "input gain" : key == "inInvert" ? "input polarity" : key == "groove" ? "groove channel" : key == "outTo" ? "output" : key == "compKey" ? "compressor side-chain" : key == "gateKey" ? "gate side-chain" : key == "compKeyLo" ? "compressor trigger low cut" : key == "compKeyHi" ? "compressor trigger high cut" : key == "compKeyListen" ? "compressor trigger listen" : key == "gateKeyLo" ? "gate trigger low cut" : key == "gateKeyHi" ? "gate trigger high cut" : key == "gateKeyListen" ? "gate trigger listen" : key == "compBelow" ? "compressor duck below" : key == "width" ? "stereo width" : key == "gateOn" ? "gate switch" : key == "gateExp" ? "gate mode" : key == "gateFast" ? "gate attack" : key == "gateThr" ? "gate threshold" : key == "gateRange" ? "gate range" : key == "gateRel" ? "gate release" : key == "gateHold" ? "gate hold" : key == "compOn" ? "compressor switch" : key == "compFast" ? "compressor attack" : key == "compPeak" ? "compressor detector" : key == "compThr" ? "compressor threshold" : key == "compRatio" ? "compressor ratio" : key == "compRel" ? "compressor release" : key == "compMakeup" ? "compressor make-up" : key == "eqHpOn" ? "high-pass switch" : key == "eqHpHz" ? "high-pass frequency" : key == "eqLpOn" ? "low-pass switch" : key == "eqLpHz" ? "low-pass frequency" : key;
         undo.record ((t->name + " " + what).toStdString(), dragged ? ("p:" + juce::String (chain) + ":" + key).toStdString() : std::string(),
                      [this, chain, key, before] { if (auto* x = chainAt (chain)) applyTrackParam (*x, key, before); },
                      [this, chain, key, after]  { if (auto* x = chainAt (chain)) applyTrackParam (*x, key, after); });
@@ -2414,7 +2431,7 @@ public:
     }
 
     // tracks
-    struct PlugSnap { juce::PluginDescription desc; juce::String state; bool bypass = false; bool internal = false; SlotKit kit; };
+    struct PlugSnap { juce::PluginDescription desc; juce::String state; bool bypass = false; bool internal = false; SlotKit kit; juce::var side; };
     struct TrackSnap
     {
         juce::String name, filePath; int colour = -1; int source = 0; int uid = 0, compKey = 0, gateKey = 0, outTo = 0, parallelFrom = 0, kind = 0; float gainDb = 0, pan = 0; bool mute = false, solo = false;
@@ -2426,7 +2443,7 @@ public:
         auto* t = chainAt (chain);
         if (t == nullptr || slot < 0 || slot >= (int) t->slots.size()) return false;
         auto& s = *t->slots[(size_t) slot];
-        out.desc = s.desc; out.bypass = s.bypass.load(); out.internal = s.desc.pluginFormatName == "Internal";
+        out.desc = s.desc; out.bypass = s.bypass.load(); out.internal = s.desc.pluginFormatName == "Internal"; out.side = s.scKey.load() != 0 ? slotSideVar (s) : juce::var();
         juce::MemoryBlock mb; s.proc->getStateInformation (mb); out.state = mb.toBase64Encoding();
         out.kit = copySlotKit (chain, slot);
         return true;
@@ -2442,6 +2459,7 @@ public:
                     const int last = (int) t->slots.size() - 1, to = juce::jlimit (0, last, slot);
                     if (to < last) std::rotate (t->slots.begin() + to, t->slots.end() - 1, t->slots.end());
                     t->slots[(size_t) to]->bypass.store (sn->bypass);
+                    loadSlotSide (*t->slots[(size_t) to], sn->side);
                     if (sn->kit.taken) { remapSlots (chain, [to] (int s) { return s >= to ? s + 1 : s; }); putSlotKit (chain, to, sn->kit); }
                     publishPlan(); stateDirty.store (true);
                 }
@@ -2978,7 +2996,7 @@ public:
                     if (mb.getSize() > 0) inst->setStateInformation (mb.getData(), (int) mb.getSize());
                 }
                 auto slot = std::make_unique<Slot>();
-                slot->desc = d; slot->bypass.store (false);
+                slot->desc = d; slot->bypass.store (false); slot->scBus = sideBusOf (*inst, d.isInstrument);
                 if (linkIdHint.isNotEmpty() && ! linkIdInUse (linkIdHint)) slot->linkId = linkIdHint;      // the song remembers which connection this copy had (a pasted copy does not take its original's)
                 slot->proc = std::move (inst);
                 tr->slots.push_back (std::move (slot));
@@ -2997,7 +3015,7 @@ public:
         prepareProc (*proc);
         auto slot = std::make_unique<Slot>();
         slot->desc.name = name; slot->desc.manufacturerName = "Ask Archie"; slot->desc.pluginFormatName = "Internal";
-        slot->proc = std::move (proc);
+        slot->proc = std::move (proc); slot->scBus = sideBusOf (*slot->proc, false);
         t->slots.push_back (std::move (slot));
         publishPlan(); stateDirty.store (true);
         return (int) t->slots.size() - 1;
@@ -3024,6 +3042,85 @@ public:
         std::swap (t->slots[(size_t) slot], t->slots[(size_t) j]);
         remapSlots (track, [slot, j] (int s) { return s == slot ? j : s == j ? slot : s; });
         publishPlan(); stateDirty.store (true);
+    }
+
+    // SIDE-CHAIN INPUT of a plug-in. An instrument that takes audio in hears the trigger on its own input; an effect needs an extra input bus, which is switched on only while something is chosen (so a
+    // plug-in nobody feeds behaves exactly as before).
+    static int sideBusOf (juce::AudioProcessor& p, bool isInstrument) { if (isInstrument) return p.getTotalNumInputChannels() > 0 ? 0 : -1; return p.getBusCount (true) > 1 ? 1 : -1; }
+    void applySideInput (Slot& s, bool on)
+    {
+        if (s.scBus == 0) { s.scFirst.store (0); s.scCount.store (on ? juce::jmin (2, s.proc->getTotalNumInputChannels()) : 0); return; }
+        if (s.scBus != 1) return;
+        s.hold.store (true); quiesce();
+        s.proc->releaseResources();
+        auto layout = s.proc->getBusesLayout();
+        if (layout.inputBuses.size() > 1)
+        {
+            layout.inputBuses.getReference (1) = on ? juce::AudioChannelSet::stereo() : juce::AudioChannelSet::disabled();
+            if (! s.proc->setBusesLayout (layout) && on) { layout.inputBuses.getReference (1) = juce::AudioChannelSet::mono(); s.proc->setBusesLayout (layout); }
+        }
+        prepareProc (*s.proc);
+        auto* bus = s.proc->getBus (true, 1);
+        const bool live = on && bus != nullptr && bus->isEnabled() && bus->getNumberOfChannels() > 0;
+        s.scFirst.store (live ? s.proc->getChannelIndexInProcessBlockBuffer (true, 1, 0) : 0); s.scCount.store (live ? juce::jmin (2, bus->getNumberOfChannels()) : 0);
+        s.hold.store (false);
+    }
+    // one setting of one plug-in's side-chain: "key" (a source number), "lo", "hi", "listen". False when this plug-in cannot take it.
+    bool setSlotSide (int chain, int slot, const juce::String& field, const juce::var& v)
+    {
+        auto* t = chainAt (chain);
+        if (t == nullptr || slot < 0 || slot >= (int) t->slots.size()) return false;
+        auto& s = *t->slots[(size_t) slot];
+        if (field == "key")
+        {
+            int k = archieSC::sanitize ((int) v); if (k > 0 && chain >= 0 && chain < trackCount.load() && k == t->uid.load()) k = 0;      // never its own track
+            if (k != 0 && s.scBus < 0) return false;
+            if ((k != 0) != (s.scCount.load() > 0)) applySideInput (s, k != 0);
+            if (k != 0 && s.scCount.load() <= 0) { publishPlan(); return false; }      // the plug-in would not switch its side-chain input on
+            s.scKey.store (k); if (k == 0) s.side.listen.store (false);
+            publishPlan();
+        }
+        else if (field == "lo") s.side.lo.store ((float) juce::jlimit (20.0, 4000.0, (double) v));
+        else if (field == "hi") s.side.hi.store ((float) juce::jlimit (22.0, 20000.0, (double) v));
+        else if (field == "listen") s.side.listen.store ((bool) v && s.scKey.load() != 0);
+        else return false;
+        stateDirty.store (true); return true;
+    }
+    juce::var getSlotSide (int chain, int slot, const juce::String& field)
+    {
+        auto* t = chainAt (chain);
+        if (t == nullptr || slot < 0 || slot >= (int) t->slots.size()) return {};
+        auto& s = *t->slots[(size_t) slot];
+        if (field == "key") return s.scKey.load(); if (field == "lo") return (double) s.side.lo.load(); if (field == "hi") return (double) s.side.hi.load(); if (field == "listen") return s.side.listen.load(); return {};
+    }
+    bool editSlotSide (int chain, int slot, const juce::String& field, const juce::var& v)
+    {
+        const juce::var before = getSlotSide (chain, slot, field);
+        if (! setSlotSide (chain, slot, field, v)) return false;
+        const juce::var after = getSlotSide (chain, slot, field);
+        if (field != "listen" && before != after)
+            undo.record ("Side-chain " + (field == "key" ? juce::String ("source") : field == "lo" ? juce::String ("low cut") : juce::String ("high cut")).toStdString(), ("side:" + juce::String (chain) + ":" + juce::String (slot) + ":" + field).toStdString(),
+                         [this, chain, slot, field, before] { setSlotSide (chain, slot, field, before); }, [this, chain, slot, field, after] { setSlotSide (chain, slot, field, after); });
+        return true;
+    }
+    static juce::var slotSideVar (const Slot& s) { auto* o = new juce::DynamicObject(); o->setProperty ("can", s.scBus >= 0); o->setProperty ("key", s.scKey.load()); o->setProperty ("lo", (double) s.side.lo.load()); o->setProperty ("hi", (double) s.side.hi.load()); o->setProperty ("listen", s.side.listen.load()); return juce::var (o); }
+    void loadSlotSide (Slot& s, const juce::var& v)
+    {
+        if (! v.isObject()) return;
+        s.side.lo.store ((float) juce::jlimit (20.0, 4000.0, (double) v.getProperty ("lo", 20.0))); s.side.hi.store ((float) juce::jlimit (22.0, 20000.0, (double) v.getProperty ("hi", 20000.0)));
+        const int k = archieSC::sanitize ((int) v.getProperty ("key", 0));
+        if (k != 0 && s.scBus >= 0) { applySideInput (s, true); if (s.scCount.load() > 0) s.scKey.store (k); }
+        publishPlan();
+    }
+    void loadLastSide (int chain, const juce::var& v) { if (auto* t = chainAt (chain)) if (! t->slots.empty()) loadSlotSide (*t->slots.back(), v); }
+    // a track's compressor and gate trigger settings, saved beside compKey / gateKey (an older song has none: fully open, Duck below off)
+    static void putKeys (juce::DynamicObject& o, TrackState& t) { o.setProperty ("compKeyLo", (double) t.compSide.lo.load()); o.setProperty ("compKeyHi", (double) t.compSide.hi.load()); o.setProperty ("gateKeyLo", (double) t.gateSide.lo.load()); o.setProperty ("gateKeyHi", (double) t.gateSide.hi.load()); o.setProperty ("compBelow", t.compBelow.load()); o.setProperty ("compKeyListen", t.compSide.listen.load()); o.setProperty ("gateKeyListen", t.gateSide.listen.load()); }
+    static void loadKeys (TrackState& t, const juce::var& v)
+    {
+        auto hz = [&v] (const char* name, double fallback, double lo, double hi) { return (float) juce::jlimit (lo, hi, (double) v.getProperty (name, fallback)); };
+        t.compSide.lo.store (hz ("compKeyLo", 20.0, 20.0, 4000.0)); t.compSide.hi.store (hz ("compKeyHi", 20000.0, 22.0, 20000.0)); t.gateSide.lo.store (hz ("gateKeyLo", 20.0, 20.0, 4000.0)); t.gateSide.hi.store (hz ("gateKeyHi", 20000.0, 22.0, 20000.0));
+        const int below = (int) v.getProperty ("compBelow", 0); t.compBelow.store (below == 22 || below == 35 || below == 47 ? below : 0);
+        t.compSide.listen.store (false); t.gateSide.listen.store (false);      // LISTEN is for setting up: a song never opens with it on
     }
 
     void setBypass (int track, int slot, bool b)
@@ -3120,7 +3217,7 @@ public:
             auto& t = *tracks[(size_t) ti];
             auto* o = new juce::DynamicObject();
             o->setProperty ("index", t.index); o->setProperty ("name", t.name); o->setProperty ("colour", t.colour.load()); o->setProperty ("latency", chainLatency (t));
-            o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); o->setProperty ("outTo", t.outTo.load()); o->setProperty ("parallelFrom", t.parallelFrom.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
+            o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); putKeys (*o, t); o->setProperty ("outTo", t.outTo.load()); o->setProperty ("parallelFrom", t.parallelFrom.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
             o->setProperty ("mute", t.mute.load()); o->setProperty ("solo", t.solo.load()); o->setProperty ("armed", t.armed.load());
             o->setProperty ("file", juce::File (t.filePath).getFileName());
             const Clip pc = t.primaryClip();
@@ -3129,7 +3226,7 @@ public:
             { int nl = 0, no = 0; for (const auto& l : t.autoSnap.load()->lanes) { ++nl; if (l.on) ++no; } o->setProperty ("autoLanes", nl); o->setProperty ("autoOn", no); }          // for the mixer's AUTO button
             { double h = 0; for (const auto& in : t.arrSnap.load()->insts) { for (const auto& mk : in.markers) h = h * 1.000007 + mk.sec * 83.0 + mk.beat * 89.0; h = h * 1.000003 + in.id * 7.0 + in.start * 13.0 + in.length * 17.0 + in.offset * 19.0 + (in.content ? in.content->id * 23.0 + (double) in.content->notes.size() * 29.0 : 0.0) + (in.warp ? 37.0 : 0.0) + (in.warped ? 41.0 : 0.0) + in.srcBpm * 43.0 + (in.repitch ? 47.0 : 0.0) + in.gainDb * 53.0 + in.fadeIn * 59.0 + in.fadeOut * 61.0 + (in.reverse ? 67.0 : 0.0) + in.colour * 97.0 + (in.muted ? 101.0 : 0.0) + (double) in.label.hashCode() * 0.001; } o->setProperty ("arrRev", h); }      // changes whenever a clip is changed, by anyone
             juce::Array<juce::var> sl;
-            for (auto& s : t.slots) { auto* so = new juce::DynamicObject(); so->setProperty ("name", s->desc.name); so->setProperty ("maker", s->desc.manufacturerName); so->setProperty ("bypass", s->bypass.load()); so->setProperty ("latency", juce::jmax (0, s->proc->getLatencySamples())); so->setProperty ("instrument", s->desc.isInstrument); so->setProperty ("linkable", linkKindOf (*s).isNotEmpty()); so->setProperty ("linkId", s->linkId); if (s->link != nullptr) { so->setProperty ("link", archielink::DeviceLink::stateName (s->link->state())); so->setProperty ("linkMessage", s->link->message()); } else so->setProperty ("link", "off"); sl.add (juce::var (so)); }
+            for (auto& s : t.slots) { auto* so = new juce::DynamicObject(); so->setProperty ("name", s->desc.name); so->setProperty ("maker", s->desc.manufacturerName); so->setProperty ("sc", slotSideVar (*s)); so->setProperty ("bypass", s->bypass.load()); so->setProperty ("latency", juce::jmax (0, s->proc->getLatencySamples())); so->setProperty ("instrument", s->desc.isInstrument); so->setProperty ("linkable", linkKindOf (*s).isNotEmpty()); so->setProperty ("linkId", s->linkId); if (s->link != nullptr) { so->setProperty ("link", archielink::DeviceLink::stateName (s->link->state())); so->setProperty ("linkMessage", s->link->message()); } else so->setProperty ("link", "off"); sl.add (juce::var (so)); }
             o->setProperty ("slots", sl);
             juce::Array<juce::var> sends; for (int s = 0; s < kSends; ++s) { auto* so = new juce::DynamicObject(); so->setProperty ("db", sendEff (t, s)); so->setProperty ("lvl", t.sendLvl[s].load()); so->setProperty ("on", t.sendOn[s].load()); so->setProperty ("pre", t.sendPre[s].load()); sends.add (juce::var (so)); }
             o->setProperty ("sends", sends); o->setProperty ("patterns", patternCountOf (t));
@@ -3276,7 +3373,7 @@ public:
     juce::var slotsVar (TrackState& t)
     {
         juce::Array<juce::var> sl;
-        for (auto& s : t.slots) { auto* so = new juce::DynamicObject(); so->setProperty ("name", s->desc.name); so->setProperty ("maker", s->desc.manufacturerName); so->setProperty ("bypass", s->bypass.load()); so->setProperty ("latency", juce::jmax (0, s->proc->getLatencySamples())); so->setProperty ("instrument", s->desc.isInstrument); so->setProperty ("linkable", linkKindOf (*s).isNotEmpty()); so->setProperty ("linkId", s->linkId); if (s->link != nullptr) { so->setProperty ("link", archielink::DeviceLink::stateName (s->link->state())); so->setProperty ("linkMessage", s->link->message()); } else so->setProperty ("link", "off"); sl.add (juce::var (so)); }
+        for (auto& s : t.slots) { auto* so = new juce::DynamicObject(); so->setProperty ("name", s->desc.name); so->setProperty ("maker", s->desc.manufacturerName); so->setProperty ("sc", slotSideVar (*s)); so->setProperty ("bypass", s->bypass.load()); so->setProperty ("latency", juce::jmax (0, s->proc->getLatencySamples())); so->setProperty ("instrument", s->desc.isInstrument); so->setProperty ("linkable", linkKindOf (*s).isNotEmpty()); so->setProperty ("linkId", s->linkId); if (s->link != nullptr) { so->setProperty ("link", archielink::DeviceLink::stateName (s->link->state())); so->setProperty ("linkMessage", s->link->message()); } else so->setProperty ("link", "off"); sl.add (juce::var (so)); }
         return sl;
     }
     juce::var chainsVar()
@@ -3315,6 +3412,7 @@ public:
             if (masterChain != nullptr) look (*masterChain, 200);
             o->setProperty ("broken", bad);
         }
+        { int lost = 0; for (int ti = 0; ti < trackCount.load(); ++ti) lost += tracks[(size_t) ti]->keys.lost.exchange (0); o->setProperty ("midiLost", lost); }      // live MIDI messages the queue had no room for since the console last asked
         o->setProperty ("mgr", master != nullptr ? (double) master->cGr.exchange (0.0f) : 0.0);
         o->setProperty ("amGr", master != nullptr ? (double) master->amGr.exchange (0.0f) : 0.0);          // the Archie sound limiter: dB turned down
         o->setProperty ("lufsM", master != nullptr ? (double) master->lm.momentary.load() : -100.0); o->setProperty ("lufsS", master != nullptr ? (double) master->lm.shortTerm.load() : -100.0); o->setProperty ("lufsI", master != nullptr ? (double) master->lm.integrated.load() : -100.0);      // loudness in LUFS: momentary (400 ms), short-term (3 s) and integrated (the song so far, gated)
@@ -3355,6 +3453,7 @@ public:
             auto* so = new juce::DynamicObject();
             so->setProperty ("desc", s->desc.createXml()->toString()); so->setProperty ("bypass", s->bypass.load());
             if (s->linkId.isNotEmpty()) so->setProperty ("linkId", s->linkId);
+            if (s->scKey.load() != 0) so->setProperty ("sc", slotSideVar (*s));
             juce::MemoryBlock mb; s->proc->getStateInformation (mb);
             so->setProperty ("state", mb.toBase64Encoding());
             sl.add (juce::var (so));
@@ -3366,7 +3465,7 @@ public:
     juce::var trackVar (int ti)
     {
             auto& t = *tracks[(size_t) ti]; auto* o = new juce::DynamicObject();
-            o->setProperty ("name", t.name); o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); o->setProperty ("outTo", t.outTo.load()); o->setProperty ("parallelFrom", t.parallelFrom.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
+            o->setProperty ("name", t.name); o->setProperty ("kind", t.kind.load()); o->setProperty ("inChan", t.inChan.load()); o->setProperty ("inStereo", t.inStereo.load()); o->setProperty ("inGainDb", (double) t.inGainDb.load()); o->setProperty ("inInvert", t.inInvert.load()); o->setProperty ("patPlay", t.patPlay.load()); o->setProperty ("patTrans", t.patTrans.load()); o->setProperty ("eq", eqVar (t.index)); o->setProperty ("width", (double) t.width.load()); o->setProperty ("groove", t.grooveCh.load()); o->setProperty ("uid", t.uid.load()); o->setProperty ("compKey", t.compKey.load()); o->setProperty ("gateKey", t.gateKey.load()); putKeys (*o, t); o->setProperty ("outTo", t.outTo.load()); o->setProperty ("parallelFrom", t.parallelFrom.load()); o->setProperty ("gateOn", t.gateOn.load()); o->setProperty ("gateExp", t.gateExp.load()); o->setProperty ("gateFast", t.gateFast.load()); o->setProperty ("gateThr", (double) t.gateThr.load()); o->setProperty ("gateRange", (double) t.gateRange.load()); o->setProperty ("gateRel", (double) t.gateRel.load()); o->setProperty ("gateHold", (double) t.gateHold.load()); o->setProperty ("compOn", t.compOn.load()); o->setProperty ("compFast", t.compFast.load()); o->setProperty ("compPeak", t.compPeak.load()); o->setProperty ("compThr", (double) t.compThr.load()); o->setProperty ("compRatio", (double) t.compRatio.load()); o->setProperty ("compRel", (double) t.compRel.load()); o->setProperty ("compMakeup", (double) t.compMakeup.load()); o->setProperty ("eqHpOn", t.eqHpOn.load()); o->setProperty ("eqHpHz", (double) t.eqHpHz.load()); o->setProperty ("eqLpOn", t.eqLpOn.load()); o->setProperty ("eqLpHz", (double) t.eqLpHz.load()); o->setProperty ("monitor", t.monitor.load()); o->setProperty ("source", t.source.load()); o->setProperty ("gainDb", t.gainDb.load()); o->setProperty ("pan", t.pan.load());
             o->setProperty ("mute", t.mute.load()); o->setProperty ("solo", t.solo.load()); o->setProperty ("armed", t.armed.load());
             o->setProperty ("colour", t.colour.load()); o->setProperty ("automation", autoVar (t.index)); o->setProperty ("remotes", remotesVar (t.index));
             o->setProperty ("filePath", t.filePath); o->setProperty ("clip", clipToVar (t)); o->setProperty ("arrangement", arrangementVar (t));
@@ -3376,6 +3475,7 @@ public:
                 auto* so = new juce::DynamicObject();
                 so->setProperty ("desc", s->desc.createXml()->toString()); so->setProperty ("bypass", s->bypass.load());
             if (s->linkId.isNotEmpty()) so->setProperty ("linkId", s->linkId);
+                if (s->scKey.load() != 0) so->setProperty ("sc", slotSideVar (*s));
                 juce::MemoryBlock mb; s->proc->getStateInformation (mb);
                 so->setProperty ("state", mb.toBase64Encoding());
                 sl.add (juce::var (so));
@@ -3388,7 +3488,7 @@ public:
     // the settings of a track (not its name, level, clips, automation, sends or plug-ins) from such a value
     void loadTrackSettings (TrackState& t, const juce::var& tv)
     {
-        t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
+        t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); loadKeys (t, tv); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
     }
     // A track made from such a value, added at the end. Clips are NEW copies (not shared with the track it came from). Plug-ins load in the background; `done` is told when they are all in (empty text = fine).
     // Returns the new track's number, or -1 if there is no room.
@@ -3414,8 +3514,9 @@ public:
                 auto d = savedDesc (sv);
                 if (crashedBeforeDesc (d)) { errors->add (d.name + " was left out: it stopped the program while loading before (load it by hand with Try it anyway)"); continue; }
                 const bool bypass = (bool) sv.getProperty ("bypass", false); ++(*pending);
-                addPluginAsync (i, d, sv.getProperty ("state", {}).toString(), [this, i, bypass, errors, finish] (juce::String err)
-                { if (err.isNotEmpty()) errors->add (err); else if (bypass) setBypass (i, (int) tracks[(size_t) i]->slots.size() - 1, true); finish(); }, sv.getProperty ("linkId", {}).toString());
+                const juce::var sc = sv.getProperty ("sc", {});
+                addPluginAsync (i, d, sv.getProperty ("state", {}).toString(), [this, i, bypass, sc, errors, finish] (juce::String err)
+                { if (err.isNotEmpty()) errors->add (err); else { loadLastSide (i, sc); if (bypass) setBypass (i, (int) tracks[(size_t) i]->slots.size() - 1, true); } finish(); }, sv.getProperty ("linkId", {}).toString());
             }
         finish(); stateDirty.store (true);
         return i;
@@ -3494,7 +3595,7 @@ public:
     void wipeTrackPlace (TrackState& t)
     {
         t.autoSnap.publish (std::make_unique<AutoSet>()); t.autoMute.store (-1); t.autoTouchUntilMs.store (0.0); for (auto& m : t.autoTouchSendMs) m.store (0.0);
-        t.patWant.store (-1); t.patPlay.store (1); t.patTrans.store (0); t.grooveCh.store (-1); t.inGainDb.store (0.0f); t.inInvert.store (false); t.width.store (1.0f);
+        t.keys.clear(); t.patWant.store (-1); t.patPlay.store (1); t.patTrans.store (0); t.grooveCh.store (-1); t.inGainDb.store (0.0f); t.inInvert.store (false); t.width.store (1.0f);
         t.eqHpOn.store (false); t.eqLpOn.store (false); t.eqHpHz.store (80.0f); t.eqLpHz.store (12000.0f);
         { const EqPanel fresh; for (int i = 0; i < kEqBands; ++i) { t.eq.band[i].on.store (fresh.band[i].on.load()); t.eq.band[i].hz.store (fresh.band[i].hz.load()); t.eq.band[i].gain.store (fresh.band[i].gain.load()); t.eq.band[i].q.store (fresh.band[i].q.load()); } for (auto& hm : t.eq.handUntilMs) hm.store (0.0); }
         t.compOn.store (false); t.compFast.store (false); t.compPeak.store (true); t.compThr.store (-18.0f); t.compRatio.store (4.0f); t.compRel.store (0.3f); t.compMakeup.store (0.0f);
@@ -3552,7 +3653,7 @@ public:
             {
                 const auto& tv = (*arr)[i]; auto& t = *tracks[(size_t) i];
                 { t.colour.store (juce::jlimit (-1, kPaletteSize - 1, (int) tv.getProperty ("colour", -1))); }
-                t.name = tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); { const int u = (int) tv.getProperty ("uid", 0); if (u > 0) { t.uid.store (u); if (u >= nextUid.load()) nextUid.store (u + 1); } else t.uid.store (nextUid.fetch_add (1)); } t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
+                t.name = tv.getProperty ("name", t.name).toString(); t.kind.store (juce::jlimit (0, 2, (int) tv.getProperty ("kind", 0))); t.inGainDb.store ((float) juce::jlimit ((double) InputStage::kMinDb, (double) InputStage::kMaxDb, (double) tv.getProperty ("inGainDb", 0.0))); t.inInvert.store ((bool) tv.getProperty ("inInvert", false)); t.patPlay.store (juce::jlimit (0, 2, (int) tv.getProperty ("patPlay", 1))); t.patTrans.store (juce::jlimit (-24, 24, (int) tv.getProperty ("patTrans", 0))); loadEqVar (t.index, tv.getProperty ("eq", {})); t.width.store ((float) juce::jlimit (0.0, (double) WidthStage::kMax, (double) tv.getProperty ("width", 1.0))); t.grooveCh.store (juce::jlimit (-1, kGrooveChans - 1, (int) tv.getProperty ("groove", -1)) >= 1 ? (int) tv.getProperty ("groove", -1) : -1); { const int u = (int) tv.getProperty ("uid", 0); if (u > 0) { t.uid.store (u); if (u >= nextUid.load()) nextUid.store (u + 1); } else t.uid.store (nextUid.fetch_add (1)); } t.compKey.store ((int) tv.getProperty ("compKey", 0)); t.gateKey.store ((int) tv.getProperty ("gateKey", 0)); loadKeys (t, tv); t.outTo.store ((int) tv.getProperty ("outTo", 0)); t.parallelFrom.store ((int) tv.getProperty ("parallelFrom", 0)); t.gateOn.store ((bool) tv.getProperty ("gateOn", false)); t.gateExp.store ((bool) tv.getProperty ("gateExp", false)); t.gateFast.store ((bool) tv.getProperty ("gateFast", false)); t.gateThr.store ((float) juce::jlimit ((double) GateStage::kThrMin, (double) GateStage::kThrMax, (double) tv.getProperty ("gateThr", -45.0))); t.gateRange.store ((float) juce::jlimit (0.0, (double) GateStage::kRangeMax, (double) tv.getProperty ("gateRange", 40.0))); t.gateRel.store ((float) juce::jlimit ((double) GateStage::kRelMin, (double) GateStage::kRelMax, (double) tv.getProperty ("gateRel", 0.3))); t.gateHold.store ((float) juce::jlimit (0.0, (double) GateStage::kHoldMax, (double) tv.getProperty ("gateHold", 0.05))); t.compOn.store ((bool) tv.getProperty ("compOn", false)); t.compFast.store ((bool) tv.getProperty ("compFast", false)); t.compPeak.store ((bool) tv.getProperty ("compPeak", true)); t.compThr.store ((float) juce::jlimit ((double) CompStage::kThrMin, (double) CompStage::kThrMax, (double) tv.getProperty ("compThr", -18.0))); t.compRatio.store ((float) juce::jlimit ((double) CompStage::kRatioMin, (double) CompStage::kRatioMax, (double) tv.getProperty ("compRatio", 4.0))); t.compRel.store ((float) juce::jlimit ((double) CompStage::kRelMin, (double) CompStage::kRelMax, (double) tv.getProperty ("compRel", 0.3))); t.compMakeup.store ((float) juce::jlimit (0.0, (double) CompStage::kMakeMax, (double) tv.getProperty ("compMakeup", 0.0))); t.eqHpOn.store ((bool) tv.getProperty ("eqHpOn", false)); t.eqLpOn.store ((bool) tv.getProperty ("eqLpOn", false)); t.eqHpHz.store ((float) juce::jlimit ((double) EqStage::kHpMin, (double) EqStage::kHpMax, (double) tv.getProperty ("eqHpHz", 80.0))); t.eqLpHz.store ((float) juce::jlimit ((double) EqStage::kLpMin, (double) EqStage::kLpMax, (double) tv.getProperty ("eqLpHz", 12000.0))); t.inChan.store (juce::jlimit (0, kMaxInputs - 1, (int) tv.getProperty ("inChan", 0))); t.inStereo.store ((bool) tv.getProperty ("inStereo", true)); t.monitor.store ((bool) tv.getProperty ("monitor", true)); t.source.store ((int) tv.getProperty ("source", 0));
                 t.gainDb.store ((float) (double) tv.getProperty ("gainDb", 0.0)); t.pan.store ((float) (double) tv.getProperty ("pan", 0.0));
                 t.mute.store ((bool) tv.getProperty ("mute", false)); t.solo.store ((bool) tv.getProperty ("solo", false)); t.armed.store ((bool) tv.getProperty ("armed", false));
                 if (tv.getProperty ("automation", {}).isArray()) loadAutoVar (i, tv.getProperty ("automation", {})); loadRemotesVar (i, tv.getProperty ("remotes", {}));
@@ -3567,10 +3668,11 @@ public:
                 if (crashedBeforeDesc (d)) { errors->add (d.name + " was left out: it stopped the program while loading before (load it by hand with Try it anyway)"); continue; }
                         const bool bypass = (bool) sv.getProperty ("bypass", false);
                         ++(*pending);
-                        addPluginAsync (i, d, sv.getProperty ("state", {}).toString(), [this, i, bypass, errors, finish] (juce::String err)
+                        const juce::var sc = sv.getProperty ("sc", {});
+                        addPluginAsync (i, d, sv.getProperty ("state", {}).toString(), [this, i, bypass, sc, errors, finish] (juce::String err)
                         {
                             if (err.isNotEmpty()) errors->add (err);
-                            else if (bypass) setBypass (i, (int) tracks[(size_t) i]->slots.size() - 1, true);
+                            else { loadLastSide (i, sc); if (bypass) setBypass (i, (int) tracks[(size_t) i]->slots.size() - 1, true); }
                             finish();
                         }, sv.getProperty ("linkId", {}).toString());
                     }
@@ -3590,10 +3692,11 @@ public:
                 if (crashedBeforeDesc (d)) { errors->add (d.name + " was left out: it stopped the program while loading before (load it by hand with Try it anyway)"); continue; }
                     const bool bypass = (bool) sv.getProperty ("bypass", false);
                     ++(*pending);
-                    addPluginAsync (chainId, d, sv.getProperty ("state", {}).toString(), [this, chainId, bypass, errors, finish] (juce::String err)
+                    const juce::var sc = sv.getProperty ("sc", {});
+                    addPluginAsync (chainId, d, sv.getProperty ("state", {}).toString(), [this, chainId, bypass, sc, errors, finish] (juce::String err)
                     {
                         if (err.isNotEmpty()) errors->add (err);
-                        else if (bypass) { if (auto* c = chainAt (chainId)) setBypass (chainId, (int) c->slots.size() - 1, true); }
+                        else { loadLastSide (chainId, sc); if (bypass) { if (auto* c = chainAt (chainId)) setBypass (chainId, (int) c->slots.size() - 1, true); } }
                         finish();
                     }, sv.getProperty ("linkId", {}).toString());
                 }
@@ -3668,7 +3771,14 @@ private:
         auto link = [&] (int later, int earlier) { if (later < 0 || earlier < 0 || later == earlier) return false; std::vector<char> seen ((size_t) nT, 0); if (waitsFor (earlier, later, seen)) return false; needs[(size_t) later].push_back (earlier); return true; };      // a link that would go round in a circle is refused
         for (int i = 0; i < nT; ++i) { const int to = find (plan->tracks[(size_t) i].ts->outTo.load()); if (to >= 0 && plan->tracks[(size_t) to].ts->kind.load() == 2 && link (to, i)) { out[(size_t) i] = to; plan->tracks[(size_t) to].inputs.push_back (i); } }
         for (int i = 0; i < nT; ++i) { const int from = find (plan->tracks[(size_t) i].ts->parallelFrom.load()); if (from >= 0 && link (i, from)) { plan->tracks[(size_t) i].parallelFrom = from; plan->tracks[(size_t) from].isSource = true; } }
-        for (int i = 0; i < nT; ++i) { auto& tp = plan->tracks[(size_t) i]; const int ck = find (tp.ts->compKey.load()), gk = find (tp.ts->gateKey.load()); if (link (i, ck) || (ck >= 0 && ck != i && std::find (needs[(size_t) i].begin(), needs[(size_t) i].end(), ck) != needs[(size_t) i].end())) tp.compKey = ck; if (link (i, gk) || (gk >= 0 && gk != i && std::find (needs[(size_t) i].begin(), needs[(size_t) i].end(), gk) != needs[(size_t) i].end())) tp.gateKey = gk; if (tp.compKey >= 0) plan->tracks[(size_t) tp.compKey].isKey = true; if (tp.gateKey >= 0) plan->tracks[(size_t) tp.gateKey].isKey = true; }
+        // a track listener: may take a track only when that track can be rendered first (a choice that would go round in a circle is left out)
+        auto keyOn = [&] (int i, int source) { KeyPlan k; if (archieSC::isPulse (source)) { k.pulse = source; return k; } k.ret = archieSC::returnOf (source); if (k.ret >= 0) return k; const int t = find (source); if (t >= 0 && t != i && (link (i, t) || std::find (needs[(size_t) i].begin(), needs[(size_t) i].end(), t) != needs[(size_t) i].end())) { k.track = t; plan->tracks[(size_t) t].isKey = true; } return k; };
+        for (int i = 0; i < nT; ++i)
+        {
+            auto& tp = plan->tracks[(size_t) i];
+            tp.compFrom = keyOn (i, tp.ts->compKey.load()); tp.compKey = tp.compFrom.track; tp.gateFrom = keyOn (i, tp.ts->gateKey.load()); tp.gateKey = tp.gateFrom.track;
+            for (auto& ins : tp.inserts) if (ins.slot != nullptr && ins.slot->scKey.load() != 0 && ins.slot->scCount.load() > 0) ins.key = keyOn (i, ins.slot->scKey.load());
+        }
         std::vector<int> depth ((size_t) nT, -1);
         std::function<int (int)> deep = [&] (int i) -> int { if (depth[(size_t) i] >= 0) return depth[(size_t) i]; int d = 0; for (int k : needs[(size_t) i]) d = juce::jmax (d, 1 + deep (k)); return depth[(size_t) i] = d; };
         for (int i = 0; i < nT; ++i) deep (i);
@@ -3709,6 +3819,29 @@ private:
         plan->masterChain = chainRefs (*masterChain); plan->master = master;
         plan->trackLatency = rootMax; plan->returnLatency = retMax; plan->masterLatency = chainLatency (*masterChain);
         plan->totalLatency = Z + plan->masterLatency;
+        // LINE-UP: a trigger waits for the sound it works on when that sound comes later; a pulse is placed on the moment of the song that sound is at
+        auto lateBy = [] (const std::vector<PlugRef>& chain, size_t upTo) { int l = 0; for (size_t k = 0; k < upTo && k < chain.size(); ++k) l += juce::jmax (0, chain[k].proc->getLatencySamples()); return l; };
+        auto lineUp = [&] (KeyPlan& k, archieSC::SideTap& tap, int listener) { if (k.pulse != 0) k.delay = listener; else if (k.track >= 0) { k.delay = juce::jmax (0, listener - end[(size_t) k.track]); if (k.delay > 0) tap.ensureRing(); } if (k.ret >= 0) plan->returns[(size_t) k.ret].isKey = true; };
+        for (int i = 0; i < nT; ++i)
+        {
+            auto& tp = plan->tracks[(size_t) i];
+            const int atStage = base[(size_t) i] + lateBy (tp.inserts, tp.inputAt);
+            lineUp (tp.compFrom, tp.ts->compSide, atStage); lineUp (tp.gateFrom, tp.ts->gateSide, atStage);
+            for (size_t k = 0; k < tp.inserts.size(); ++k) if (tp.inserts[k].key.any()) lineUp (tp.inserts[k].key, tp.inserts[k].slot->side, base[(size_t) i] + lateBy (tp.inserts, k));
+        }
+        // plug-ins on the FX returns and the master can listen to any track (all tracks are rendered before them) or return
+        auto outside = [&] (std::vector<PlugRef>& chain, int arrives)
+        {
+            for (size_t k = 0; k < chain.size(); ++k)
+            {
+                auto& ins = chain[k]; if (ins.slot == nullptr || ins.slot->scKey.load() == 0 || ins.slot->scCount.load() <= 0) continue;
+                const int source = ins.slot->scKey.load();
+                if (archieSC::isPulse (source)) ins.key.pulse = source; else { ins.key.ret = archieSC::returnOf (source); if (ins.key.ret < 0) { ins.key.track = find (source); if (ins.key.track >= 0) plan->tracks[(size_t) ins.key.track].isKey = true; } }
+                lineUp (ins.key, ins.slot->side, arrives + lateBy (chain, k));
+            }
+        };
+        for (int r = 0; r < kReturns; ++r) outside (plan->returns[(size_t) r].chain, tapMax);
+        outside (plan->masterChain, Z);
         plan->masterKey = master != nullptr ? find (master->cKey.load()) : -1;
         if (plan->masterKey >= 0) { plan->tracks[(size_t) plan->masterKey].isKey = true; plan->masterKeyDelay = juce::jmax (0, rootMax - end[(size_t) plan->masterKey]) + plan->dryMixDelay; }
         pdcTotal.store (plan->totalLatency);

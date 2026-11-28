@@ -553,6 +553,11 @@
   .mx-ins .mx-slot { padding:1px 2px; } .mx-ins .mx-slot button { padding:0 3px; }
   .mx-pan .kcol { flex-direction:row; justify-content:center; gap:8px; }
   .mx-route { padding-bottom:4px; } .mx-role { margin:3px 4px 0; font:700 9px/1.2 var(--font); letter-spacing:0.06em; color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mx-scopen { font-size:11px; line-height:1; padding:1px 4px; } .mx-sc { font:700 8px/1 var(--font); } .mx-sc.on { color:var(--bg); background:var(--accent); }
+  .sc-panel { position:fixed; z-index:1001; right:24px; top:80px; width:310px; background:var(--panel); color:var(--text); border:1px solid var(--ctl-border); border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,.6); padding:10px 12px; font-size:12px; user-select:none; }
+  .sc-head { display:flex; justify-content:space-between; align-items:center; font-weight:800; letter-spacing:.08em; font-size:10px; margin-bottom:8px; }
+  .sc-src, .sc-row { display:flex; align-items:center; gap:8px; margin:6px 0; } .sc-src span, .sc-row > span { flex:0 0 66px; color:var(--muted); font-size:11px; } .sc-src select { flex:1; min-width:0; } .sc-row input { flex:1; min-width:0; } .sc-row b { flex:0 0 52px; text-align:right; font-size:11px; }
+  .sc-points { display:flex; gap:4px; flex-wrap:wrap; margin:2px 0 6px 74px; } .sc-row .sc-points { margin:0; } .sc-points button { font-size:10px; padding:2px 7px; } .sc-points button.on { background:var(--accent); color:var(--bg); }
   .mx-key { display:flex; align-items:center; gap:4px; margin:3px 4px 0; font:700 8px/1 var(--font); letter-spacing:0.08em; color:var(--muted); } .mx-key select { flex:1; min-width:0; font-size:10px; padding:1px 2px; }
   .mx-pan .msr button.au { flex:1; }
 
@@ -1104,6 +1109,7 @@
   function drawMeters(m) {
     if (!m) return;
     if (!DOCK) brokenNotice(m.broken);
+    if (!DOCK && m.midiLost > 0 && Date.now() - (S.midiLostAt || 0) > 5000) { S.midiLostAt = Date.now(); log("More MIDI arrived than Archie DAW could take (" + m.midiLost + " messages skipped). Keys let go are still released.", true); }
     if (document.body.classList.contains("eqmode")) eqClipCheck(m);
     (m.tracks || []).forEach(function (p, i) { var l = $("mL" + i), r = $("mR" + i); if (l) l.style.width = dbToPct(p[0]) + "%"; if (r) r.style.width = dbToPct(p[1]) + "%"; var vl = $("vmL" + i), vr = $("vmR" + i); if (vl) vl.style.height = dbToPct(p[0]) + "%"; if (vr) vr.style.height = dbToPct(p[1]) + "%"; });
     if (m.amGr !== undefined) { var ag = $("agrm"); if (ag) ag.style.width = Math.min(100, m.amGr / 6 * 100) + "%"; }
@@ -1546,7 +1552,7 @@
           h += '<div class="unit dev hw ' + kindCls + (sl.bypass ? " by" : "") + '" draggable="true" data-c="' + it.chain + '" data-s="' + i + '"><div class="ear"><i></i><i></i></div><span class="grip" title="Drag to move">&#9776;</span>' +
             '<div class="dv-main"><div class="dv-title" data-a="edit" title="Click to open its window">' + esc(sl.name) + '</div><div class="dv-kind">' + (sl.instrument ? "Instrument" : "Effect") + (sl.latency ? " &middot; " + sl.latency + " smp delay" : "") + '</div>' + (isArchie ? '<div class="dv-built">Built with Ask Archie</div>' : '<div class="dv-maker">' + esc(sl.maker || "unknown maker") + '</div>') + '</div>' +
             '<div class="dv-io" title="Level into and out of this device, in dB below full scale (the line stays at the loudest recent peak; it turns red at full scale; click to clear)">' + (sl.instrument ? "" : '<div class="dvm"><div class="vmeter"><i id="dmI' + it.chain + "_" + i + '"></i></div><span>IN</span></div>') + '<div class="dvm"><div class="vmeter"><i id="dmO' + it.chain + "_" + i + '"></i></div><span>OUT</span></div></div>' +
-            '<div class="dv-keys"><button class="dv-open" data-a="edit" title="Open the plug-in\'s own window">Open</button><button class="dv-bypass' + (sl.bypass ? " on" : "") + '" data-a="byp" title="Bypass: the sound goes straight past this device"><b>BYPASS</b><span>' + (sl.bypass ? "BYPASSED" : "ACTIVE") + '</span></button>' + (sl.linkable ? '<button class="dv-bypass dv-link' + (sl.link === "connected" ? " live" : "") + (sl.link === "failed" ? " bad" : "") + '" data-a="lnk" title="' + esc(sl.linkMessage || "Connect this device to your Ask Archie account, so Archie and the website can see and play it") + '"><b>ARCHIE</b><span>' + (sl.link === "connected" ? "CONNECTED" : sl.link === "waiting" ? "WAITING..." : sl.link === "failed" ? "RETRY" : "CONNECT") + '</span></button>' + (sl.link === "connected" ? '<button class="dv-bypass dv-show" data-a="show" title="Show this device on the Ask Archie website (opens the page)"><b>SHOW</b><span>ON SITE</span></button>' : "") : "") + '</div>' +
+            '<div class="dv-keys"><button class="dv-open" data-a="edit" title="Open the plug-in\'s own window">Open</button><button class="dv-bypass' + (sl.bypass ? " on" : "") + '" data-a="byp" title="Bypass: the sound goes straight past this device"><b>BYPASS</b><span>' + (sl.bypass ? "BYPASSED" : "ACTIVE") + '</span></button>' + (sl.sc && sl.sc.can ? '<button type="button" class="dv-bypass' + (sl.sc.key ? " on" : "") + '" data-scopen="slot" data-scc="' + it.chain + '" data-scs="' + i + '" title="Side-chain input: what triggers this device"><b>SIDE-CHAIN</b><span>' + esc(scName(sl.sc.key).toUpperCase()) + '</span></button>' : "") + (sl.linkable ? '<button class="dv-bypass dv-link' + (sl.link === "connected" ? " live" : "") + (sl.link === "failed" ? " bad" : "") + '" data-a="lnk" title="' + esc(sl.linkMessage || "Connect this device to your Ask Archie account, so Archie and the website can see and play it") + '"><b>ARCHIE</b><span>' + (sl.link === "connected" ? "CONNECTED" : sl.link === "waiting" ? "WAITING..." : sl.link === "failed" ? "RETRY" : "CONNECT") + '</span></button>' + (sl.link === "connected" ? '<button class="dv-bypass dv-show" data-a="show" title="Show this device on the Ask Archie website (opens the page)"><b>SHOW</b><span>ON SITE</span></button>' : "") : "") + '</div>' +
             '<div class="dv-ctl"><button data-a="up" title="Earlier in the chain">&uarr;</button><button data-a="dn" title="Later in the chain">&darr;</button><button data-a="rm" title="Remove">&times;</button>' + (!sl.instrument && it.kind !== "return" ? '<button data-a="tosend" title="Move this effect to a free FX return as a SEND effect (it is then heard only when a track\'s send is turned up)">Send</button>' : "") + '</div><div class="ear"><i></i><i></i></div></div>';
         });
         if (!d.slots.length) h += '<div class="tiny" style="padding:4px 2px">Empty rack. Add a device below, or drop one here.</div>';
@@ -1683,7 +1689,7 @@
   }
   function mxInserts(chainId, slots, label, tc, rows) {
     var o = '<div class="mx-sec mx-ins"><div class="mx-bar sec-ins">' + label + "</div>";
-    slots.forEach(function (s, i) { o += '<div class="mx-slot' + (s.bypass ? " by" : "") + '" data-c="' + chainId + '" data-s="' + i + '"><span class="n" data-a="edit" title="' + esc(s.maker || "") + ' (click to open its window)">' + (s.instrument ? "&#9835; " : "") + esc(s.name) + '</span><button data-a="byp" title="Bypass">B</button><button data-a="up" title="Earlier in the chain">&#8593;</button><button data-a="dn" title="Later in the chain">&#8595;</button><button data-a="del" title="Remove">&times;</button></div>'; });
+    slots.forEach(function (s, i) { o += '<div class="mx-slot' + (s.bypass ? " by" : "") + '" data-c="' + chainId + '" data-s="' + i + '"><span class="n" data-a="edit" title="' + esc(s.maker || "") + ' (click to open its window)">' + (s.instrument ? "&#9835; " : "") + esc(s.name) + '</span>' + (s.sc && s.sc.can ? '<button type="button" class="mx-sc' + (s.sc.key ? " on" : "") + '" data-scopen="slot" data-scc="' + chainId + '" data-scs="' + i + '" title="Side-chain input: ' + esc(scName(s.sc.key)) + '">SC</button>' : "") + '<button data-a="byp" title="Bypass">B</button><button data-a="up" title="Earlier in the chain">&#8593;</button><button data-a="dn" title="Later in the chain">&#8595;</button><button data-a="del" title="Remove">&times;</button></div>'; });
     // STRIPS LINE UP: a channel with fewer inserts than the fullest one gets empty rows of the same height, so everything below sits level across the mixer
     for (var p = slots.length; p < (rows || 0); p++) o += '<div class="mx-slot ph" aria-hidden="true"><span class="n">&nbsp;</span><button tabindex="-1">&nbsp;</button></div>';
     var allBy = slots.length > 0 && slots.every(function (s) { return s.bypass; });
@@ -1724,10 +1730,89 @@
   function cText(k, v) { return k === "ratio" ? (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + ":1" : k === "thr" ? Math.round(v * 10) / 10 + " dB" : k === "rel" ? (v < 1 ? Math.round(v * 1000) + " ms" : Math.round(v * 10) / 10 + " s") : "+" + (Math.round(v * 10) / 10) + " dB"; }
   // SIDE-CHAIN: which track the compressor or gate listens to (a track is named by its own number, so the choice follows it when tracks move)
   function keyPick(key, own, chosen, title) {
-    var tracks = (S.state && S.state.tracks) || [], h = '<label class="mx-key" title="' + esc(title) + '"><span>KEY</span><select data-sc="' + key + '" data-sct="' + (own ? own.index : -1) + '"><option value="0">' + (own ? "Own sound" : "The mix") + "</option>";
-    tracks.forEach(function (t) { if (own && t.index === own.index) return; h += '<option value="' + t.uid + '"' + (t.uid === chosen ? " selected" : "") + ">" + esc(t.name || ("Track " + (t.index + 1))) + "</option>"; });
-    return h + "</select></label>";
+    var h = '<label class="mx-key" title="' + esc(title) + '"><span>KEY</span><select data-sc="' + key + '" data-sct="' + (own ? own.index : -1) + '">';
+    if (!own) {      // the master compressor: the mix, or a track
+      h += '<option value="0">The mix</option>';
+      ((S.state && S.state.tracks) || []).forEach(function (t) { h += '<option value="' + t.uid + '"' + (t.uid === chosen ? " selected" : "") + ">" + esc(t.name || ("Track " + (t.index + 1))) + "</option>"; });
+      return h + "</select></label>";
+    }
+    h += scOptions(own.index, chosen, "Own sound") + "</select>";
+    return h + (chosen ? '<button type="button" class="mx-scopen" data-scopen="' + (key === "gateKey" ? "gate" : "comp") + '" data-scc="' + own.index + '" title="Trigger filter, Listen' + (key === "compKey" ? " and Duck below" : "") + '">&#9881;</button>' : "") + "</label>";
   }
+  // ---- SIDE-CHAIN: the sources a compressor, a gate or a plug-in can listen to (the numbers are the engine's: SideChain.h) ----
+  var SC_PULSES = [[-1, "Pulse 4/4 (every beat)"], [-2, "Pulse 2/4 (beats 1 and 3)"], [-3, "Pulse 6/8"], [-4, "Pulse 1/8"], [-5, "Pulse 1/16"]], SC_POINTS = [22, 35, 47];
+  // true when the track `from` already hears the track `to` (through routing, a parallel channel or a trigger): choosing it would go round in a circle
+  function scLoops(from, to) {
+    var tracks = (S.state && S.state.tracks) || [], byUid = {}; tracks.forEach(function (x) { byUid[x.uid] = x; });
+    var target = tracks[to]; if (!target) return false;
+    var seen = {};
+    function hears(x) {
+      if (!x || seen[x.uid]) return false; seen[x.uid] = true;
+      if (x.uid === target.uid) return true;
+      var next = [x.parallelFrom, x.compKey, x.gateKey]; (x.slots || []).forEach(function (s) { if (s.sc) next.push(s.sc.key); });
+      tracks.forEach(function (o) { if (x.kind === 2 && o.outTo === x.uid) next.push(o.uid); });
+      return next.some(function (u) { return u > 0 && hears(byUid[u]); });
+    }
+    return hears(from);
+  }
+  function scOptions(chain, chosen, none) {
+    var st = S.state || {}, tracks = st.tracks || [], isTrack = chain >= 0 && chain < tracks.length;
+    function opt(v, label, off) { return '<option value="' + v + '"' + (v === chosen ? " selected" : "") + (off && v !== chosen ? " disabled" : "") + ">" + esc(label) + "</option>"; }
+    var h = opt(0, none) + '<optgroup label="Tempo pulse">' + SC_PULSES.map(function (p) { return opt(p[0], p[1]); }).join("") + '</optgroup><optgroup label="Channels">';
+    tracks.forEach(function (t) { if (isTrack && t.index === chain) return; var loop = isTrack && scLoops(t, chain); h += opt(t.uid, (t.name || ("Track " + (t.index + 1))) + (loop ? " (would loop)" : ""), loop); });
+    h += '</optgroup><optgroup label="FX returns">';
+    (st.returns || []).forEach(function (r, i) { h += opt(-101 - i, retLabel(r, i)); });
+    return h + "</optgroup>";
+  }
+  function scName(v) {
+    if (!v) return "Off";
+    var p = SC_PULSES.filter(function (x) { return x[0] === v; })[0]; if (p) return p[1].replace(/ \(.*/, "");
+    var st = S.state || {}; if (v <= -101) { var i = -101 - v; return (st.returns || [])[i] ? retLabel(st.returns[i], i) : "Return"; }
+    var t = (st.tracks || []).filter(function (x) { return x.uid === v; })[0]; return t ? (t.name || ("Track " + (t.index + 1))) : "Off";
+  }
+  // the filter's sliders run from 0 to 1000 along a log scale
+  function scHz(pos, lo, hi) { var hz = lo * Math.pow(hi / lo, pos / 1000); return hz < 100 ? Math.round(hz) : hz < 1000 ? Math.round(hz / 5) * 5 : Math.round(hz / 100) * 100; }
+  function scPos(hz, lo, hi) { return Math.round(1000 * Math.log(Math.max(lo, Math.min(hi, hz)) / lo) / Math.log(hi / lo)); }
+  function scHzText(hz, open) { return hz === open ? "open" : hz >= 1000 ? (Math.round(hz / 100) / 10) + " kHz" : Math.round(hz) + " Hz"; }
+  var scTarget = null;      // { kind: "slot" | "comp" | "gate", chain, slot }
+  function scRead() {
+    if (!scTarget) return null;
+    if (scTarget.kind === "slot") { var c = chainState(scTarget.chain), s = c && c.slots && c.slots[scTarget.slot]; return s && s.sc && s.sc.can ? { name: s.name, instrument: !!s.instrument, key: s.sc.key, lo: s.sc.lo, hi: s.sc.hi, listen: !!s.sc.listen } : null; }
+    var t = ((S.state && S.state.tracks) || [])[scTarget.chain]; if (!t) return null; var p = scTarget.kind;
+    return { name: (t.name || ("Track " + (t.index + 1))) + (p === "comp" ? " compressor" : " gate"), key: t[p + "Key"], lo: t[p + "KeyLo"] || 20, hi: t[p + "KeyHi"] || 20000, listen: !!t[p + "KeyListen"], below: p === "comp" ? (t.compBelow || 0) : null };
+  }
+  function scSend(field, value) {
+    var q = scTarget; if (!q) return;
+    var call = q.kind === "slot" ? host("slotSide", { track: q.chain, slot: q.slot, key: field, value: value })
+      : host("track", { track: q.chain, key: field === "below" ? "compBelow" : q.kind + "Key" + (field === "key" ? "" : field.charAt(0).toUpperCase() + field.slice(1)), value: value });
+    call.then(function (r) { if (r && r.ok === false) log(r.error, true); });
+  }
+  function scClose() { var p = $("scPanel"); if (p) p.parentNode.removeChild(p); if (scTarget) { var v = scRead(); if (v && v.listen) scSend("listen", false); } scTarget = null; S.rendered = ""; S.mxKey = ""; S.rkKey = ""; }
+  function scDraw(v) {
+    var p = $("scPanel");
+    if (!p) { p = document.createElement("div"); p.id = "scPanel"; p.className = "sc-panel"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Side-chain input"); document.body.appendChild(p); }
+    var channel = v.key > 0 || v.key <= -101;
+    function row(field, label, hz, lo, hi, open) {
+      return '<div class="sc-row"><span>' + label + '</span><input type="range" min="0" max="1000" value="' + scPos(hz, lo, hi) + '" data-schz="' + field + '" aria-label="' + label + '"><b data-sctext="' + field + '">' + scHzText(hz, open) + "</b></div>" +
+        '<div class="sc-points">' + SC_POINTS.map(function (n) { return '<button type="button" data-scset="' + field + '" data-v="' + n + '" class="' + (Math.round(hz) === n ? "on" : "") + '">' + n + " Hz</button>"; }).join("") + '<button type="button" data-scset="' + field + '" data-v="' + open + '" class="' + (hz === open ? "on" : "") + '">Open</button></div>';
+    }
+    var h = '<div class="sc-head"><span>SIDE-CHAIN &middot; ' + esc(v.name) + '</span><button type="button" data-scx="1" title="Close">&times;</button></div>' +
+      '<label class="sc-src"><span>Input</span><select data-scsrc="1">' + scOptions(scTarget.chain, v.key, scTarget.kind === "slot" ? "Off" : "Own sound") + "</select></label>";
+    if (channel) h += row("lo", "Low cut", v.lo, 20, 4000, 20) + row("hi", "High cut", v.hi, 22, 20000, 20000) + '<div class="sc-points"><button type="button" data-sclisten="1" class="' + (v.listen ? "on" : "") + '" title="Hear what triggers">LISTEN</button></div>';
+    else if (v.key < 0) h += '<div class="tiny">The pulse follows the song\u2019s tempo and runs while it plays.</div>';
+    if (v.below !== null && v.below !== undefined && v.key !== 0) h += '<div class="sc-row"><span>Duck below</span><div class="sc-points">' + [0, 22, 35, 47].map(function (n) { return '<button type="button" data-scbelow="' + n + '" class="' + (v.below === n ? "on" : "") + '">' + (n ? n + " Hz" : "All") + "</button>"; }).join("") + "</div></div>";
+    if (scTarget.kind === "slot" && v.instrument && v.key !== 0) h += '<div class="tiny">Switch on the instrument\u2019s own side-chain control too (SIDE CHAIN on the Bass Banger).</div>';
+    p.innerHTML = h;
+    p.querySelector("[data-scx]").onclick = scClose;
+    p.querySelector("[data-scsrc]").onchange = function () { var k = +this.value; v.key = k; if (!k) v.listen = false; scSend("key", k); this.blur(); scDraw(v); };
+    Array.prototype.forEach.call(p.querySelectorAll("[data-schz]"), function (el) { el.oninput = function () { var field = el.getAttribute("data-schz"), hz = field === "lo" ? scHz(+el.value, 20, 4000) : scHz(+el.value, 22, 20000); v[field] = hz; p.querySelector('[data-sctext="' + field + '"]').textContent = scHzText(hz, field === "lo" ? 20 : 20000); scSend(field, hz); }; el.onchange = function () { scDraw(v); }; });
+    Array.prototype.forEach.call(p.querySelectorAll("[data-scset]"), function (b) { b.onclick = function () { var field = b.getAttribute("data-scset"), hz = +b.getAttribute("data-v"); v[field] = hz; scSend(field, hz); scDraw(v); }; });
+    Array.prototype.forEach.call(p.querySelectorAll("[data-scbelow]"), function (b) { b.onclick = function () { v.below = +b.getAttribute("data-scbelow"); scSend("below", v.below); scDraw(v); }; });
+    var l = p.querySelector("[data-sclisten]"); if (l) l.onclick = function () { v.listen = !v.listen; scSend("listen", v.listen); scDraw(v); };
+  }
+  function scOpen(kind, chain, slot) { if (scTarget) scClose(); scTarget = { kind: kind, chain: chain, slot: slot }; var v = scRead(); if (!v) { scTarget = null; return; } scDraw(v); }
+  document.addEventListener("click", function (e) { var b = e.target.closest ? e.target.closest("[data-scopen]") : null; if (!b) return; e.preventDefault(); e.stopPropagation(); var kind = b.getAttribute("data-scopen"); scOpen(kind, +b.getAttribute("data-scc"), kind === "slot" ? +b.getAttribute("data-scs") : 0); }, true);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && scTarget) { e.stopPropagation(); scClose(); } }, true);
   document.addEventListener("change", function (e) {
     var s = e.target && e.target.getAttribute && e.target.getAttribute("data-sc"); if (!s) return; var v = +e.target.value, ti = +e.target.getAttribute("data-sct"); e.target.blur();
     (s === "mcKey" ? host("masterComp", { key: s, value: v }) : host("track", { track: ti, key: s, value: v })).then(function (r) { if (r && r.ok === false) log(r.error, true); });
@@ -2870,9 +2955,10 @@
     var d = null; try { var it = rackItems(S.state).filter(function (x) { return x.chain === chain; })[0]; d = it && it.d.slots[slot]; } catch (e) { d = null; } if (!d) return [];
     return [
       { label: "Open the Plug-in Window", run: function () { host("openEditor", { track: chain, slot: slot }); } }, { label: "Bypass", checked: !!d.bypass, run: function () { host("bypass", { track: chain, slot: slot, on: !d.bypass }); } }, "-",
+    ].concat(d.sc && d.sc.can ? [{ label: "Side-chain Input...", checked: !!d.sc.key, run: function () { scOpen("slot", chain, slot); } }, "-"] : []).concat([
       { label: "Move Up", run: function () { host("moveSlot", { track: chain, slot: slot, dir: -1 }); } }, { label: "Move Down", run: function () { host("moveSlot", { track: chain, slot: slot, dir: 1 }); } }, "-",
       { label: "Remove", run: function () { host("removePlugin", { track: chain, slot: slot }); } }, { label: "Measure in the Analyser", run: function () { var pl = ((S.state && S.state.plugins) || []).filter(function (p) { return p.name === d.name; })[0]; if (pl) $("aChopHits") && 0; host("analyse", { track: chain, slot: slot }).then(function (r) { if (r && !r.ok) log(r.error, true); else openSettings("browsing"); }); } }, N("Save Device Patch As")
-    ];
+    ]);
   }
   window.addEventListener("contextmenu", function (e) {
     var t = e.target, inField = /INPUT|SELECT|TEXTAREA/.test(t.tagName || ""); if (inField) return;

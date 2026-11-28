@@ -2,6 +2,22 @@
   "about": "One entry per PUBLISHED version of Archie DAW, newest first. scripts/publish-desktop-studio.mjs refuses to publish a version that has no entry here, so every release leaves a trace. The notes are written in plain, correct English for the person downloading; they are shown on the Desktop Studio page and kept in the private bucket as desktop-studio/releases.json.",
   "releases": [
     {
+      "version": "0.1.160",
+      "date": "2026-11-28",
+      "title": "Side-chain any plug-in",
+      "notes": [
+        "Plug-ins with a side-chain input now have an SC button in the mixer and a SIDE-CHAIN button in the rack. Feed them from any channel or FX return, or from a pulse that follows the song tempo: 4/4, 2/4, 6/8, 1/8 or 1/16. Instruments that listen to their own audio input, such as the Bagri Bass Banger, can be fed the same way; switch on their own side-chain control too.",
+        "The channel compressor and gate can use the same pulses and FX returns as their trigger.",
+        "Each trigger from a channel has its own Low cut and High cut, with 22, 35 and 47 Hz buttons, and a Listen button to hear it. The filter changes only the trigger, never the sound you hear.",
+        "The channel compressor has a new Duck below setting (All, 22, 35 or 47 Hz): only the sound below that point is turned down.",
+        "An FX return used as a trigger arrives one audio block late, a few milliseconds.",
+        "Fewer hanging notes: a key release reaches the track that is holding the note even when another track has been selected, or when a flood of MIDI messages delays it.",
+        "Fewer clicks: switching a plug-in in or out of bypass, and adding, moving or removing plug-ins, now fades over a few milliseconds.",
+        "Notes are no longer doubled at very small buffer sizes.",
+        "Archie DAW is free software under the GNU General Public License, version 3. Its source code is at https://github.com/grahamlee99/archie-daw for anyone who downloads the program."
+      ]
+    },
+    {
       "version": "0.1.159",
       "date": "2026-11-27",
       "title": "One plug-in can no longer silence the song",

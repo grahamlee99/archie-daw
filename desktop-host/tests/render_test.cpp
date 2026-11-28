@@ -7,6 +7,7 @@
 #include "../Source/ArchieLink.h"
 #include "../Source/KeepLoaded.h"
 #include <cstdio>
+#include <set>
 #include <array>
 #include <thread>
 #include <atomic>
@@ -63,6 +64,22 @@ private:
 };
 // the renderer asks the processor for its latency through the base class: report it there
 struct LatProc : TestProc { using TestProc::TestProc; };
+
+// an effect with a side-chain input (a second input bus, off until switched on): it passes its main sound and keeps what arrived on the side-chain
+class ScProc : public TestProc
+{
+public:
+    ScProc() : TestProc (2, 2, 0) { addBus (true); if (auto* b = getBus (true, 1)) b->enable (false); }
+    bool canAddBus (bool isInput) const override { return isInput; }
+    bool isBusesLayoutSupported (const BusesLayout& l) const override { return l.getMainInputChannelSet() == juce::AudioChannelSet::stereo() && l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo(); }
+    void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override
+    {
+        auto* bus = getBus (true, 1); const bool on = bus != nullptr && bus->isEnabled();
+        for (int i = 0; i < b.getNumSamples(); ++i) heard.push_back (on ? b.getSample (getChannelIndexInProcessBlockBuffer (true, 1, 0), i) : 0.0f);
+    }
+    float peakFrom (size_t a) const { float pk = 0; for (size_t i = a; i < heard.size(); ++i) pk = std::max (pk, std::abs (heard[i])); return pk; }
+    std::vector<float> heard;
+};
 
 // stands in for a heavy plug-in: a fixed amount of arithmetic per block
 class HeavyProc : public TestProc
@@ -295,6 +312,98 @@ int main()
             CHECK (p->resets == 1, "and reset once, when the fault begins");
             p->bad = false; auto after = run (e, 420, bs);
             CHECK (std::abs (peakOf (after) - 0.5f) < 2e-3f && e.meters().getProperty ("broken", {}).size() == 0, "a device that recovers is heard again and the report clears");
+        }
+    }
+
+    // ---- NO HANGING NOTES: a release always arrives (after a track switch, while bypassed, and when the queue is full) ----
+    {
+        struct KeyProbe : public juce::AudioProcessor
+        {
+            KeyProbe() : juce::AudioProcessor (BusesProperties().withOutput ("out", juce::AudioChannelSet::stereo(), true)) {}
+            const juce::String getName() const override { return "KeyProbe"; }
+            void prepareToPlay (double, int) override {} void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer& m) override
+            {
+                for (const auto meta : m) { const auto x = meta.getMessage(); if (x.isNoteOn()) down.insert (x.getNoteNumber()); else if (x.isNoteOff()) down.erase (x.getNoteNumber()); else if (x.isController() && x.getControllerNumber() == 64) pedal = x.getControllerValue(); else if (x.isPitchWheel()) bend = x.getPitchWheelValue(); }
+                for (int c = 0; c < b.getNumChannels(); ++c) juce::FloatVectorOperations::fill (b.getWritePointer (c), 0.5f, b.getNumSamples());
+            }
+            double getTailLengthSeconds() const override { return 0; } bool acceptsMidi() const override { return true; } bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; } bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; } int getCurrentProgram() override { return 0; } void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; } void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {} void setStateInformation (const void*, int) override {}
+            std::set<int> down; int pedal = 0, bend = 8192;
+        };
+        using M = juce::MidiMessage;
+        auto build = [&] (HostEngine& e, KeyProbe*& a, KeyProbe*& b) { e.prepareOffline (sr, bs, 0); auto pa = std::make_unique<KeyProbe>(); a = pa.get(); e.addProcessor (0, std::move (pa), "a"); auto pb = std::make_unique<KeyProbe>(); b = pb.get(); e.addProcessor (1, std::move (pb), "b"); e.selectTrack (0); run (e, 2, bs); };
+        { HostEngine e; KeyProbe *a, *b; build (e, a, b);
+          e.handleIncomingMidiMessage (nullptr, M::noteOn (1, 60, (juce::uint8) 100)); e.handleIncomingMidiMessage (nullptr, M::controllerEvent (1, 64, 127)); run (e, 2, bs);
+          const bool pressed = a->down.count (60) == 1 && a->pedal == 127 && b->down.empty();
+          e.selectTrack (1); e.handleIncomingMidiMessage (nullptr, M::noteOff (1, 60)); e.handleIncomingMidiMessage (nullptr, M::controllerEvent (1, 64, 0)); run (e, 2, bs);
+          CHECK (pressed && a->down.empty() && a->pedal == 0, "a key and a pedal let go after another track is selected still reach the track that heard them pressed");
+          e.handleIncomingMidiMessage (nullptr, M::noteOn (1, 62, (juce::uint8) 100)); e.handleIncomingMidiMessage (nullptr, M::noteOff (1, 62)); run (e, 2, bs);
+          CHECK (a->down.empty() && b->down.empty() && ! a->down.count (62), "and the next key goes only to the track now selected"); }
+        { HostEngine e; KeyProbe *a, *b; build (e, a, b);
+          e.trackAt (1)->mute.store (true); e.updateSolo();      // (the other probe sounds all the time: it is muted so that only the bypassed one is listened for)
+          e.handleIncomingMidiMessage (nullptr, M::noteOn (1, 61, (juce::uint8) 100)); run (e, 2, bs); e.setBypass (0, 0, true); run (e, 8, bs);
+          e.handleIncomingMidiMessage (nullptr, M::noteOff (1, 61)); auto out = run (e, 2, bs);
+          float loud = 0; for (float v : out) loud = std::max (loud, std::abs (v));
+          CHECK (a->down.empty() && loud < 1.0e-6f, "a bypassed instrument hears the key let go, and is still not heard"); }
+        { HostEngine e; KeyProbe *a, *b; build (e, a, b);
+          e.handleIncomingMidiMessage (nullptr, M::noteOn (1, 63, (juce::uint8) 100)); e.handleIncomingMidiMessage (nullptr, M::controllerEvent (1, 64, 127)); e.handleIncomingMidiMessage (nullptr, M::pitchWheel (1, 12000)); run (e, 2, bs);
+          for (int i = 0; i < 3000; ++i) e.handleIncomingMidiMessage (nullptr, M::controllerEvent (1, 1, i % 128));
+          e.handleIncomingMidiMessage (nullptr, M::noteOff (1, 63)); e.handleIncomingMidiMessage (nullptr, M::controllerEvent (1, 64, 0)); e.handleIncomingMidiMessage (nullptr, M::pitchWheel (1, 8192));
+          const int lost = (int) e.meters().getProperty ("midiLost", 0); run (e, 2, bs);
+          CHECK (a->down.empty() && a->pedal == 0 && a->bend == 8192, "with the queue flooded the key and pedal are still released and the pitch wheel still returns to centre");
+          CHECK (lost > 1000 && (int) e.meters().getProperty ("midiLost", 0) == 0, "and the skipped messages are counted once, to be said"); }
+    }
+
+    // ---- EVERY NOTE ONCE, whatever the buffer: a note on the seam between two pieces of the song is sent by exactly one of them ----
+    {
+        struct Count : public juce::AudioProcessor
+        {
+            Count() : juce::AudioProcessor (BusesProperties().withOutput ("out", juce::AudioChannelSet::stereo(), true)) { ons.reserve (4096); }
+            const juce::String getName() const override { return "Count"; }
+            void prepareToPlay (double, int) override {} void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer& m) override { for (const auto meta : m) { const auto x = meta.getMessage(); if (x.isNoteOn()) ons.push_back (x.getNoteNumber()); else if (x.isNoteOff()) ++offs; } }
+            double getTailLengthSeconds() const override { return 0; } bool acceptsMidi() const override { return true; } bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; } bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; } int getCurrentProgram() override { return 0; } void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; } void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {} void setStateInformation (const void*, int) override {}
+            std::vector<int> ons; int offs = 0;
+        };
+        bool exact = true;
+        for (double bpm : { 120.0, 140.0, 128.0, 173.7 }) for (int block : { 16, 32, 48, 64, 375 })
+        {
+            HostEngine e; e.prepareOffline (48000.0, block, 0); e.transport.setBpm (bpm); run (e, 1, block); auto p = std::make_unique<Count>(); auto* pr = p.get(); e.addProcessor (0, std::move (p), "count");
+            auto* c = new juce::DynamicObject(); c->setProperty ("lengthBeats", 16.0); juce::Array<juce::var> notes; for (int i = 0; i < 64; ++i) { auto* n = new juce::DynamicObject(); n->setProperty ("beat", i * 0.25); n->setProperty ("len", 0.25); n->setProperty ("note", 40 + i); n->setProperty ("vel", 100); notes.add (juce::var (n)); } c->setProperty ("notes", notes);
+            e.editAddInstance (0, 0.0, 16.0, 0.0, juce::var (c), 0); e.transport.locate (0.0); e.transport.play(); run (e, (int) (15.9 * 60.0 / bpm * 48000.0) / block + 1, block);
+            bool once = pr->ons.size() == 64; for (size_t i = 0; once && i < 64; ++i) once = pr->ons[i] == 40 + (int) i;
+            if (! once || pr->offs < 63) { exact = false; std::printf ("  %.1f bpm, block %d: %d note-ons, %d note-offs\n", bpm, block, (int) pr->ons.size(), pr->offs); }
+        }
+        CHECK (exact, "at buffers from 16 samples up, and four tempos, each of 64 back-to-back notes is sent once and in order");
+    }
+
+    // ---- NO CLICKS AT SWITCHES: bypass crossfades (a delaying plug-in stays in line), and adding or removing a plug-in is smoothed ----
+    {
+        auto biggest = [] (const std::vector<float>& v) { double m = 0; for (size_t i = 1; i < v.size(); ++i) m = std::max (m, (double) std::abs (v[i] - v[i - 1])); return m; };
+        auto join = [] (std::vector<float>& to, const std::vector<float>& more) { to.insert (to.end(), more.begin(), more.end()); };
+        for (int late : { 0, 240, 1500 })
+        {
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.trackAt (0)->source.store (2); e.addProcessor (0, std::make_unique<LatProc> (2, 2, late, 1.0f), "late");
+            run (e, 40, bs); auto before = run (e, 20, bs); const double own = biggest (before);
+            std::vector<float> all = before; e.setBypass (0, 0, true); join (all, run (e, 30, bs)); e.setBypass (0, 0, false); join (all, run (e, 40, bs));
+            CHECK (biggest (all) < 1.5 * own, "bypassing and un-bypassing a plug-in (with or without delay) makes no jump");
+            float worst = 0; for (size_t i = 0; i < before.size() && i + 90 * (size_t) bs < all.size(); ++i) {}
+            double r1 = 0, r2 = 0; for (size_t i = all.size() - before.size(); i < all.size(); ++i) r2 += (double) all[i] * all[i]; for (float v : before) r1 += (double) v * v;
+            CHECK (std::abs (r2 - r1) < 0.05 * r1, "and the sound comes back at the same level");
+            (void) worst;
+        }
+        {
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.trackAt (0)->source.store (2); run (e, 20, bs); auto before = run (e, 20, bs); const double own = biggest (before);
+            std::vector<float> all = before; e.addProcessor (0, std::make_unique<TestProc> (2, 2, 0, 0.25f), "quiet"); join (all, run (e, 20, bs)); e.removePlugin (0, 0); join (all, run (e, 20, bs));
+            CHECK (biggest (all) < 1.5 * own, "putting a plug-in on a playing track and taking it off makes no jump");
         }
     }
 
@@ -3215,6 +3324,75 @@ int main()
         CHECK (std::abs (mQuiet - 0.25f) < 0.01f && mDuck < 0.12f, "the master compressor listens to its key track instead of the mix");
         e.editRemoveTrack (3); CHECK (e.planNow()->masterKey < 0 && peakAfter (e) >= 0.0f, "when the key track is removed the compressor listens to its own sound again");
     }
+    // SIDE-CHAIN INPUTS (2026-11-28): tempo pulses, the trigger filter, FX returns, Duck below, and plug-ins
+    {
+        auto set = [] (HostEngine& e, int track, const char* key, juce::var v) { return e.editChainParam (track, key, v); };
+        auto peakIn = [] (const std::vector<float>& o, int a, int b) { float pk = 0; for (int i = a; i < b && i < (int) o.size(); ++i) pk = std::max (pk, std::abs (o[(size_t) i])); return pk; };
+        auto listener = [&] (HostEngine& e) { e.prepareOffline (sr, bs, 0); e.transport.setBpm (120.0); e.trackAt (0)->source.store (2); set (e, 0, "compOn", true); set (e, 0, "compThr", -30.0); set (e, 0, "compRatio", 20.0); set (e, 0, "compRel", 0.05); };
+        const int beat = 24000;
+        {
+            HostEngine e; listener (e); CHECK (set (e, 0, "compKey", -1) && e.trackAt (0)->compKey.load() == -1, "a 4/4 pulse can be chosen as the trigger");
+            auto stopped = run (e, 400, bs); CHECK (std::abs (peakIn (stopped, 60000, 100000) - 0.25f) < 0.005f, "with the song stopped a pulse does nothing");
+            e.transport.locate (0.0); e.transport.play(); auto o = run (e, 400, bs);
+            bool onEvery = true, backBetween = true; for (int k = 1; k < 4; ++k) { if (peakIn (o, k * beat + 480, k * beat + 1900) > 0.12f) onEvery = false; if (peakIn (o, k * beat + 20000, k * beat + 23800) < 0.2f) backBetween = false; }
+            CHECK (onEvery, "4/4 ducks on every beat"); CHECK (backBetween, "and the sound comes back before the next");
+            HostEngine g; listener (g); set (g, 0, "compKey", -2); g.transport.locate (0.0); g.transport.play(); auto two = run (g, 500, bs);
+            CHECK (peakIn (two, 2 * beat + 480, 2 * beat + 1900) < 0.12f && peakIn (two, beat + 480, beat + 1900) > 0.2f && peakIn (two, 4 * beat + 480, 4 * beat + 1900) < 0.12f, "2/4 ducks on beats 1 and 3 only");
+            double since = 0; CHECK (archieSC::pulseAt (-3, 0.0, 120.0, since) >= 0.0f && std::abs (archieSC::pulseAt (-3, 1.5 + 0.02, 120.0, since) - 1.0f) < 1.0e-4f && std::abs (archieSC::pulseAt (-3, 0.52, 120.0, since) - 0.55f) < 1.0e-4f, "6/8 pulses every eighth, strong on the first and fourth");
+            CHECK (archieSC::pulseAt (-5, 0.27, 120.0, since) > 0.9f && archieSC::pulseAt (-4, 0.27, 120.0, since) < 0.01f, "1/16 pulses twice as often as 1/8");
+        }
+        {   // the trigger filter: the key is a 440 Hz tone
+            HostEngine e; listener (e); e.trackAt (2)->source.store (2); set (e, 2, "mute", true); set (e, 0, "compKey", e.trackAt (2)->uid.load());
+            auto level = [&] { run (e, 200, bs); auto o = run (e, 100, bs); return peakIn (o, 0, (int) o.size()); };
+            const float open = level(); CHECK (open < 0.12f, "wide open, the key ducks");
+            set (e, 0, "compKeyHi", 60.0); const float noLows = level(); set (e, 0, "compKeyHi", 20000.0); set (e, 0, "compKeyLo", 4000.0); const float noHighs = level();
+            CHECK (noLows > 0.2f && noHighs > 0.2f, "a High cut below the key, or a Low cut above it, takes it out of the trigger"); set (e, 0, "compKeyLo", 20.0); CHECK (level() < 0.12f, "and opening the filter brings it back");
+            set (e, 0, "compKeyListen", true); set (e, 0, "compOn", false); run (e, 40, bs); CHECK (std::abs (level() - 0.25f) < 0.01f, "Listen plays the trigger");
+            set (e, 0, "compKeyLo", 4000.0); CHECK (level() < 0.03f, "through its filter");
+            set (e, 0, "compKeyListen", false); set (e, 0, "compKeyLo", 20.0);
+            // Duck below
+            set (e, 0, "compOn", true); set (e, 0, "compBelow", 47); const float split = level(); CHECK (split > 0.2f, "Duck below 47 Hz leaves a 440 Hz tone alone");
+            set (e, 0, "compBelow", 0); CHECK (level() < 0.12f, "All ducks it again"); CHECK (! (set (e, 0, "compBelow", 99), e.trackAt (0)->compBelow.load() != 0), "only 22, 35 and 47 are Duck below points");
+            // saved with the song, and an older song is untouched
+            set (e, 0, "compKeyLo", 35.0); set (e, 0, "compKeyHi", 120.0); set (e, 0, "compBelow", 35); set (e, 0, "gateKey", -4);
+            auto song = e.saveProject(); HostEngine g; g.prepareOffline (sr, bs, 0); g.loadProject (song, [] (juce::String) {});
+            auto& t = *g.trackAt (0); CHECK (std::abs (t.compSide.lo.load() - 35.0f) < 0.01f && std::abs (t.compSide.hi.load() - 120.0f) < 0.01f && t.compBelow.load() == 35 && t.gateKey.load() == -4, "the trigger settings are saved with the song");
+            HostEngine old; old.prepareOffline (sr, bs, 0); CHECK (old.trackAt (0)->compSide.lo.load() == 20.0f && old.trackAt (0)->compSide.hi.load() == 20000.0f && old.trackAt (0)->compBelow.load() == 0, "a new or older song starts fully open");
+        }
+        {   // an FX return as the trigger
+            HostEngine e; listener (e); e.trackAt (2)->source.store (2); set (e, 2, "gainDb", -90.0); e.setSend (*e.trackAt (2), 0, 0.0f, true); CHECK (set (e, kReturnBase, "gainDb", -90.0), "the return is turned down so only the listener is measured"); set (e, 0, "compKey", -101);
+            run (e, 300, bs); auto o = run (e, 100, bs); std::printf ("  return key: isKey %d, level %.3f, from %d\n", (int) e.planNow()->returns[0].isKey, peakIn (o, 0, (int) o.size()), (int) e.planNow()->returns[0].fromTracks.size()); CHECK (e.planNow()->returns[0].isKey && peakIn (o, 0, (int) o.size()) < 0.16f, "an FX return can trigger the compressor");
+        }
+        {   // a plug-in's side-chain input
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.transport.setBpm (120.0); e.trackAt (0)->source.store (2);
+            auto pr = std::make_unique<ScProc>(); auto* p = pr.get(); e.addProcessor (0, std::move (pr), "side probe");
+            auto& slot = *e.trackAt (0)->slots[0]; CHECK (slot.scBus == 1 && ! p->getBus (true, 1)->isEnabled(), "an effect with a side-chain has it off until something is chosen");
+            e.trackAt (2)->source.store (2); set (e, 2, "mute", true); const int uid = e.trackAt (2)->uid.load();
+            CHECK (e.editSlotSide (0, 0, "key", uid) && p->getBus (true, 1)->isEnabled() && slot.scCount.load() == 2, "choosing a track switches the side-chain on");
+            p->heard.clear(); auto o = run (e, 100, bs); CHECK (std::abs (p->peakFrom (p->heard.size() / 2) - 0.25f) < 0.01f, "the plug-in hears that track, even muted");
+            CHECK (std::abs (peakIn (o, 12000, (int) o.size()) - 0.25f) < 0.01f, "and its own sound is what comes out");
+            CHECK (e.planNow()->levels.size() == 2, "the track it listens to is rendered first");
+            e.editSlotSide (0, 0, "hi", 60.0); run (e, 100, bs); p->heard.clear(); run (e, 60, bs); CHECK (p->peakFrom (0) < 0.02f, "the High cut shapes what the plug-in hears"); e.editSlotSide (0, 0, "hi", 20000.0);
+            CHECK (e.editSlotSide (0, 0, "key", -1), "a pulse can feed it"); run (e, 20, bs); p->heard.clear(); run (e, 100, bs); CHECK (p->peakFrom (0) < 1.0e-6f, "silent while stopped");
+            e.transport.locate (0.0); p->heard.clear(); e.transport.play(); run (e, 200, bs);
+            size_t first = 0; while (first < p->heard.size() && std::abs (p->heard[first]) < 0.01f) ++first; CHECK (first < 200 && p->peakFrom (0) > 0.5f, "and thuds on the beat from the moment the song plays");
+            e.transport.stop(); e.editSlotSide (0, 0, "key", uid);
+            auto song = e.saveProject(); CHECK (juce::JSON::toString (song).contains ("\"sc\""), "the choice is saved with the song");
+            CHECK (! e.editSlotSide (0, 0, "key", e.trackAt (0)->uid.load()) || slot.scKey.load() == 0, "a track never feeds its own plug-in");
+            e.editSlotSide (0, 0, "key", uid); CHECK (e.editSlotSide (0, 0, "key", 0) && ! p->getBus (true, 1)->isEnabled() && slot.scCount.load() == 0, "Off switches the side-chain off again");
+            e.undo.undo(); CHECK (slot.scKey.load() == uid, "and Undo brings the choice back");
+        }
+        {   // a plug-in without a side-chain, an instrument that takes its trigger on its own input, and a plug-in after one that adds delay
+            HostEngine e; e.prepareOffline (sr, bs, 0); e.transport.setBpm (120.0);
+            e.addProcessor (0, std::make_unique<TestProc> (2, 2, 0), "plain"); CHECK (! e.editSlotSide (0, 0, "key", -1), "a plug-in with no side-chain input refuses one");
+            auto& slot = *e.trackAt (0)->slots[0]; slot.desc.isInstrument = true; slot.scBus = 0; e.trackAt (2)->source.store (2); set (e, 2, "mute", true);
+            CHECK (e.editSlotSide (0, 0, "key", e.trackAt (2)->uid.load()), "an instrument with an audio input takes the trigger there"); run (e, 100, bs); auto o = run (e, 60, bs); CHECK (std::abs (peakIn (o, 0, (int) o.size()) - 0.25f) < 0.01f, "it arrives at the instrument's input");
+            HostEngine g; g.prepareOffline (sr, bs, 0); g.transport.setBpm (120.0); g.addProcessor (0, std::make_unique<LatProc> (2, 2, 1000), "late"); auto pr = std::make_unique<ScProc>(); auto* p = pr.get(); g.addProcessor (0, std::move (pr), "side probe");
+            g.editSlotSide (0, 1, "key", -1); run (g, 8, bs); p->heard.clear(); g.transport.locate (0.0); g.transport.play(); run (g, 100, bs);
+            size_t first = 0; while (first < p->heard.size() && std::abs (p->heard[first]) < 0.01f) ++first; CHECK (first >= 990 && first < 1200, "a pulse waits for the sound it works on when a plug-in before it adds delay");
+        }
+    }
+
     // GROOVE: pre-align and one global shuffle
     {
         GrooveSet g = defaultGrooveSet(); g.ch[1].on = true; g.ch[1].patch = "Straight"; g.ch[1].shuffle = 60.0f; g.globalShuffle = 30.0f;
